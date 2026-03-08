@@ -1,0 +1,44 @@
+model:
+  name: "unsloth/Qwen2.5-VL-3B-Instruct"
+  load_in_4bit: true
+
+lora:
+  r: 16
+  alpha: 32
+  target_modules: "all-linear"
+  finetune_vision_layers: false
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+  lora_dropout: 0
+  bias: "none"
+
+training:
+  batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  epochs: 3
+  optimizer: "adamw_8bit"
+  gradient_checkpointing: "unsloth"
+  max_seq_length: 2048
+  warmup_steps: 5
+  logging_steps: 10
+  save_steps: 50
+
+data:
+  action_horizon: 5
+  rdp_epsilon: 2.0
+  train_split: 0.8
+  dataset_path: "data/processed"
+  instructions: "configs/instructions.yaml"
+  checkpoint_dir: "models/checkpoints"
+  raw:
+    sessions: "data/raw/sessions"
+    frames: "data/raw/frames"
+  interim:
+    compressed: "data/interim/compressed"
+    chunks: "data/interim/chunks"
+
+inference:
+  max_chunks: 60
+  ensemble_execute_k: 1

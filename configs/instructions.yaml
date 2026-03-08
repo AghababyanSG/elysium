@@ -1,0 +1,18 @@
+tasks:
+  mustache:
+    instruction: "Draw a mustache on the face"
+    sessions:
+      - del_piero_20260308_233931
+      - kaka_20260308_234123
+      - pirlo_20260308_234054
+  glasses:
+    instruction: "Draw glasses on the face"
+    sessions: []
+  beard:
+    instruction: "Draw a beard"
+    sessions: []
+  hair:
+    instruction: "Draw hair on top of head"
+    sessions: 
+      - stam_20260308_233753
+      - david_silva_20260308_233838

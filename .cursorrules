@@ -1,0 +1,186 @@
+# ============================================================
+# Cursor Rules — AI Project with Image Manipulation
+# ============================================================
+
+## 🧠 Project Context
+This is an AI-powered application that performs image manipulation tasks
+(e.g., generation, editing, filtering, segmentation, inpainting, style transfer).
+Code must be clean, performant, and safe for production AI/ML workloads.
+
+---
+
+## 🗂️ Project Structure
+
+```
+src/
+  ai/           # AI model loading, inference, pipelines
+  image/        # Core image processing utilities
+  api/          # API routes / server handlers
+  ui/           # Frontend components (if applicable)
+  utils/        # Shared helpers
+  config/       # Config files and constants
+  types/        # TypeScript types / Pydantic models
+tests/
+  unit/
+  integration/
+assets/         # Static assets, test images
+scripts/        # One-off scripts, batch processing
+```
+
+---
+
+## 🐍 Python Rules (Backend / ML)
+
+### General
+- Use Python 3.10+ features (match statements, type unions with `|`)
+- All functions must have type hints — no bare `Any` unless unavoidable
+- Use `pathlib.Path` instead of `os.path` for all file operations
+- Prefer `dataclasses` or `pydantic` models over raw dicts for structured data
+- Use `__all__` in module files to define public API
+
+### AI / Model Code
+- Always wrap model inference in a dedicated class (e.g., `class ImagePipeline`)
+- Separate model loading from inference: `load()` vs `run()` methods
+- Use `torch.no_grad()` or `@torch.inference_mode()` for all inference calls
+- Never load a model inside a request handler — always load at startup
+- Log model load time and memory usage on initialization
+- Use `device = torch.device("cuda" if torch.cuda.is_available() else "cpu")` pattern
+- Support both FP32 and FP16 (`model.half()`) with a config flag
+- Always validate inputs before passing to model (shape, dtype, value range)
+
+### Image Processing
+- Work in float32 internally; convert to uint8 only for output/storage
+- Normalize images to [0, 1] unless a model explicitly expects [0, 255] or [-1, 1]
+- Document the expected input/output range in every image function's docstring
+- Use PIL for simple I/O and transforms; use OpenCV for performance-critical ops
+- Use NumPy for array manipulation; avoid nested Python loops on pixel data
+- Always check image shape before processing: `assert img.ndim == 3`
+- Handle both RGB and RGBA; explicitly convert when needed
+- Never mutate input images in-place — return new arrays/tensors
+- Use context managers for large temporary buffers: `with torch.cuda.memory_efficient_sdp_enabled():`
+
+### Async & Concurrency
+- Use `asyncio` for I/O-bound tasks (file reads, HTTP calls)
+- Use thread pools (`concurrent.futures.ThreadPoolExecutor`) for CPU-bound image tasks
+- Never run blocking model inference in the async event loop — use `run_in_executor`
+- Implement job queuing (e.g., with Celery or asyncio.Queue) for heavy workloads
+
+### Error Handling
+- Raise typed exceptions (create custom exceptions in `src/exceptions.py`)
+- Catch and wrap library errors (Pillow `UnidentifiedImageError`, etc.) with context
+- Never silently swallow exceptions in image pipelines
+- Return `Result` types or raise for API-boundary functions — be consistent
+
+---
+
+## ⚡ TypeScript / JavaScript Rules (Frontend / Node)
+
+### General
+- Use TypeScript strict mode: `"strict": true` in tsconfig
+- Prefer `const` over `let`; never use `var`
+- Use named exports, not default exports (except for Next.js pages/layouts)
+- All async functions must handle errors with try/catch or `.catch()`
+
+### Image Handling
+- Use `<img>` with explicit `width` and `height` to prevent layout shift
+- Always set `alt` text on images for accessibility
+- Use `URL.createObjectURL()` for client-side image previews; revoke with `URL.revokeObjectURL()` when done
+- Use `canvas` API for client-side image transformations — never mutate DOM images directly
+- Use `HTMLCanvasElement.toBlob()` (async) over `toDataURL()` for large images
+- Compress previews before sending to API — target < 2MB for uploads
+- Show skeleton loaders or progress bars during AI processing — never leave UI frozen
+
+### API Calls
+- Type all API request/response shapes with interfaces
+- Use `FormData` for multipart image uploads
+- Implement request cancellation (`AbortController`) for long-running image jobs
+- Handle `413 Payload Too Large` and display user-friendly error messages
+
+---
+
+## 🔌 API Design Rules
+
+- Use RESTful conventions: `POST /images/process`, `GET /images/{id}/status`
+- Accept images as multipart/form-data OR base64 JSON — support both
+- Always validate file type (check magic bytes, not just extension)
+- Enforce file size limits (default: 10MB) and return `413` with a clear message
+- Return job IDs for long operations; use polling or WebSocket for status
+- Include processing metadata in responses: `model`, `duration_ms`, `input_size`
+- Use structured logging (JSON) for all requests with `image_id`, `operation`, `duration`
+
+---
+
+## 🔒 Security Rules
+
+- Validate all uploaded files — check MIME type AND magic bytes
+- Sanitize filenames — never use user-provided names for filesystem paths
+- Limit max image dimensions (e.g., 4096×4096) to prevent DoS
+- Scan for malicious content in SVGs and animated GIFs
+- Use signed URLs or tokens for output image storage
+- Never log image content or base64 data — log metadata only
+- Rate-limit image generation endpoints (e.g., 10 req/min per user)
+
+---
+
+## 🧪 Testing Rules
+
+- Unit test every image utility function with multiple input shapes/dtypes
+- Include edge cases: empty images, single-pixel, very large (4K), unusual aspect ratios
+- Test with both CPU and GPU paths (mock CUDA if unavailable in CI)
+- Use `pytest-benchmark` for performance regression tests on core transforms
+- Test model inference with known inputs and expected outputs (snapshot tests)
+- Ensure consistent output: same input → same output (seed control for generative models)
+
+---
+
+## 📦 Dependencies & Environment
+
+- Pin all ML dependencies (torch, diffusers, transformers) to exact versions
+- Use virtual environments; document CUDA version in README
+- Never commit model weights — reference by URL/hash in config
+- Use `.env` files for API keys and model paths; never hardcode secrets
+- Document GPU memory requirements per model in comments
+
+---
+
+## 🚀 Performance Rules
+
+- Cache loaded models — never reload per request
+- Use batching for multiple image requests when possible
+- Resize images to model's expected resolution before inference, not after
+- Profile with `torch.profiler` or `cProfile` before optimizing
+- Use ONNX Runtime or TorchScript for production inference when possible
+- Log slow operations (>500ms) with a warning
+
+---
+
+## 📝 Documentation Rules
+
+- Every public function needs a docstring: purpose, params, return value, exceptions
+- Document image format expectations: shape `(H, W, C)`, dtype, value range
+- Include example input/output in docstrings for non-trivial transforms
+- Add a `# NOTE:` comment explaining any non-obvious mathematical operations
+- Keep a `CHANGELOG.md` updated with model version bumps
+
+---
+
+## 🎨 Code Style
+
+- Max line length: 100 characters
+- Use `ruff` for Python linting and `black` for formatting
+- Use `eslint` + `prettier` for TypeScript
+- Commit messages: `type(scope): description` (e.g., `feat(pipeline): add inpainting support`)
+- Branch naming: `feature/`, `fix/`, `experiment/`, `chore/`
+
+---
+
+## ⛔ Anti-Patterns to Avoid
+
+- ❌ Loading models on every request
+- ❌ Using raw pixel loops in Python (use vectorized NumPy/PyTorch ops)
+- ❌ Storing generated images in memory indefinitely — use TTL/cleanup jobs
+- ❌ Ignoring image orientation EXIF data (causes subtle rotation bugs)
+- ❌ Assuming all images are RGB — always check and convert explicitly
+- ❌ Hard-coding model paths or API keys
+- ❌ Using `print()` for debugging in production code — use `logging`
+- ❌ Returning raw tensor objects from API functions — convert to numpy/PIL first

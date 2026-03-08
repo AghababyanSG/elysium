@@ -1,0 +1,13 @@
+torch>=2.4.0
+unsloth[colab-new]
+transformers>=4.46.0
+trl>=0.12.0
+datasets>=3.0.0
+peft>=0.13.0
+bitsandbytes>=0.44.0
+Pillow>=10.0.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+pyyaml>=6.0.0
+rdp>=0.8
+pygame>=2.5.0
