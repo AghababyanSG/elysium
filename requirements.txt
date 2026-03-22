@@ -1,3 +1,4 @@
+loguru>=0.7.0
 torch>=2.4.0
 unsloth[colab-new]
 transformers>=4.46.0

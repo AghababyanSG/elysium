@@ -7,7 +7,9 @@ name = "elysium"
 version = "0.1.0"
 description = "AI-driven image manipulation via Vision-Language-Action model"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "loguru>=0.7.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
