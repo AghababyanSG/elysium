@@ -1,186 +1,132 @@
-# ============================================================
-# Cursor Rules — AI Project with Image Manipulation
-# ============================================================
+# Cursor rules — Elysium (VLA image editing)
 
-## 🧠 Project Context
-This is an AI-powered application that performs image manipulation tasks
-(e.g., generation, editing, filtering, segmentation, inpainting, style transfer).
-Code must be clean, performant, and safe for production AI/ML workloads.
+## How to use this file
+
+- Treat sections marked **MUST** as non-negotiable for this repository unless the user explicitly overrides them in chat.
+- Prefer fixing root causes over workarounds.
+- Scope: first-party code under `src/elysium/`, `scripts/`, and `tools/`. Do not edit generated or third-party trees (e.g. `unsloth_compiled_cache/`, vendored copies).
 
 ---
 
-## 🗂️ Project Structure
+## MUST — From project decisions (always apply here)
+
+### 1. Errors: fail fast (Python)
+
+- Do not use `try`/`except` to swallow failures, return defaults, or substitute control flow. Invalid state should raise or fail an `assert`.
+- Prefer letting exceptions propagate. Use `assert` for invariants and preconditions where appropriate.
+- Do not add broad `except Exception:` (or similar) in project code to “keep going.”
+- First-party Python: avoid `except` blocks unless the user explicitly asks for a narrow, justified handler; prefer no `except` at all.
+- TypeScript/JavaScript rules below still allow `try`/`catch` where required for async/UI (different stack).
+
+### 2. Logging: Loguru only (Python)
+
+- Use **`from elysium.log import logger`** (Loguru). Do not use stdlib **`logging`** in new or refactored project code.
+- Use the right method for severity: `logger.debug`, `logger.info`, `logger.warning`, `logger.error`, etc.
+- Sinks are configured in **`src/elysium/log.py`** via **`configure_logging()`** (called from `elysium` package init). **`colorize=True`** is required so levels are visually distinct (e.g. errors show in red).
+- Use Loguru-style messages with **`{}`** placeholders, e.g. `logger.info("Loading {}", path)`, not `%` formatting.
+
+### 3. Log line context (caller)
+
+- Caller context (**repo-relative file path** and **function name**) is injected automatically by the patcher in **`src/elysium/log.py`**. Do not manually prefix every message with file/function; keep messages short and factual.
+
+---
+
+## Project context
+
+Python-first app: vision–language–action model for image manipulation (chunks of edit actions, canvas execution, training/inference). Code should stay clear, typed, and suitable for ML workflows.
+
+---
+
+## Repository layout (actual)
 
 ```
-src/
-  ai/           # AI model loading, inference, pipelines
-  image/        # Core image processing utilities
-  api/          # API routes / server handlers
-  ui/           # Frontend components (if applicable)
-  utils/        # Shared helpers
-  config/       # Config files and constants
-  types/        # TypeScript types / Pydantic models
-tests/
-  unit/
-  integration/
-assets/         # Static assets, test images
-scripts/        # One-off scripts, batch processing
+src/elysium/
+  engine/     # Canvas / execution
+  model/      # train, predict, RL, reward
+  schemas/    # Actions / pydantic-style models
+  log.py      # Loguru setup (MUST use from app code)
+scripts/      # CLI entrypoints (train, infer, prepare_data, …)
+tools/        # Auxiliary tools
+configs/      # YAML configs
 ```
 
----
-
-## 🐍 Python Rules (Backend / ML)
-
-### General
-- Use Python 3.10+ features (match statements, type unions with `|`)
-- All functions must have type hints — no bare `Any` unless unavoidable
-- Use `pathlib.Path` instead of `os.path` for all file operations
-- Prefer `dataclasses` or `pydantic` models over raw dicts for structured data
-- Use `__all__` in module files to define public API
-
-### AI / Model Code
-- Always wrap model inference in a dedicated class (e.g., `class ImagePipeline`)
-- Separate model loading from inference: `load()` vs `run()` methods
-- Use `torch.no_grad()` or `@torch.inference_mode()` for all inference calls
-- Never load a model inside a request handler — always load at startup
-- Log model load time and memory usage on initialization
-- Use `device = torch.device("cuda" if torch.cuda.is_available() else "cpu")` pattern
-- Support both FP32 and FP16 (`model.half()`) with a config flag
-- Always validate inputs before passing to model (shape, dtype, value range)
-
-### Image Processing
-- Work in float32 internally; convert to uint8 only for output/storage
-- Normalize images to [0, 1] unless a model explicitly expects [0, 255] or [-1, 1]
-- Document the expected input/output range in every image function's docstring
-- Use PIL for simple I/O and transforms; use OpenCV for performance-critical ops
-- Use NumPy for array manipulation; avoid nested Python loops on pixel data
-- Always check image shape before processing: `assert img.ndim == 3`
-- Handle both RGB and RGBA; explicitly convert when needed
-- Never mutate input images in-place — return new arrays/tensors
-- Use context managers for large temporary buffers: `with torch.cuda.memory_efficient_sdp_enabled():`
-
-### Async & Concurrency
-- Use `asyncio` for I/O-bound tasks (file reads, HTTP calls)
-- Use thread pools (`concurrent.futures.ThreadPoolExecutor`) for CPU-bound image tasks
-- Never run blocking model inference in the async event loop — use `run_in_executor`
-- Implement job queuing (e.g., with Celery or asyncio.Queue) for heavy workloads
-
-### Error Handling
-- Raise typed exceptions (create custom exceptions in `src/exceptions.py`)
-- Catch and wrap library errors (Pillow `UnidentifiedImageError`, etc.) with context
-- Never silently swallow exceptions in image pipelines
-- Return `Result` types or raise for API-boundary functions — be consistent
+If `elysium.data` or other packages appear, keep the same logging and error-handling MUST rules.
 
 ---
 
-## ⚡ TypeScript / JavaScript Rules (Frontend / Node)
+## Python — general
 
-### General
-- Use TypeScript strict mode: `"strict": true` in tsconfig
-- Prefer `const` over `let`; never use `var`
-- Use named exports, not default exports (except for Next.js pages/layouts)
-- All async functions must handle errors with try/catch or `.catch()`
-
-### Image Handling
-- Use `<img>` with explicit `width` and `height` to prevent layout shift
-- Always set `alt` text on images for accessibility
-- Use `URL.createObjectURL()` for client-side image previews; revoke with `URL.revokeObjectURL()` when done
-- Use `canvas` API for client-side image transformations — never mutate DOM images directly
-- Use `HTMLCanvasElement.toBlob()` (async) over `toDataURL()` for large images
-- Compress previews before sending to API — target < 2MB for uploads
-- Show skeleton loaders or progress bars during AI processing — never leave UI frozen
-
-### API Calls
-- Type all API request/response shapes with interfaces
-- Use `FormData` for multipart image uploads
-- Implement request cancellation (`AbortController`) for long-running image jobs
-- Handle `413 Payload Too Large` and display user-friendly error messages
+- Python 3.10+: use modern syntax (`match`, `X | Y` unions).
+- Type-hint public functions; avoid bare `Any` unless necessary.
+- Use **`pathlib.Path`** for filesystem paths (not `os.path` for new code).
+- Prefer dataclasses or Pydantic for structured data over untyped dicts.
+- Export public names with **`__all__`** where it helps clarity.
 
 ---
 
-## 🔌 API Design Rules
+## Python — ML / models
 
-- Use RESTful conventions: `POST /images/process`, `GET /images/{id}/status`
-- Accept images as multipart/form-data OR base64 JSON — support both
-- Always validate file type (check magic bytes, not just extension)
-- Enforce file size limits (default: 10MB) and return `413` with a clear message
-- Return job IDs for long operations; use polling or WebSocket for status
-- Include processing metadata in responses: `model`, `duration_ms`, `input_size`
-- Use structured logging (JSON) for all requests with `image_id`, `operation`, `duration`
+- Separate load vs run (e.g. load at startup, not per request in a server).
+- Inference: **`torch.inference_mode()`** or **`torch.no_grad()`** as appropriate.
+- Respect device and dtype (CUDA vs CPU; optional FP16 via config when relevant).
+- Validate tensor/array shape, dtype, and value range before model entry.
+- Do not reload large models on every call; cache where applicable.
 
 ---
 
-## 🔒 Security Rules
+## Python — images (NumPy / OpenCV / PIL)
 
-- Validate all uploaded files — check MIME type AND magic bytes
-- Sanitize filenames — never use user-provided names for filesystem paths
-- Limit max image dimensions (e.g., 4096×4096) to prevent DoS
-- Scan for malicious content in SVGs and animated GIFs
-- Use signed URLs or tokens for output image storage
-- Never log image content or base64 data — log metadata only
-- Rate-limit image generation endpoints (e.g., 10 req/min per user)
+- Internal processing: float32 where possible; uint8 for I/O or storage as needed.
+- Document expected shape `(H, W, C)`, dtype, and value range in image helpers.
+- No in-place mutation of caller-owned image arrays unless the API is explicitly documented that way; prefer returning new arrays.
+- Prefer vectorized ops; avoid tight Python loops over pixels.
 
 ---
 
-## 🧪 Testing Rules
+## Error handling (reconciled with MUST)
 
-- Unit test every image utility function with multiple input shapes/dtypes
-- Include edge cases: empty images, single-pixel, very large (4K), unusual aspect ratios
-- Test with both CPU and GPU paths (mock CUDA if unavailable in CI)
-- Use `pytest-benchmark` for performance regression tests on core transforms
-- Test model inference with known inputs and expected outputs (snapshot tests)
-- Ensure consistent output: same input → same output (seed control for generative models)
+- **Project Python code:** follow MUST “fail fast” — no silent recovery via `except`.
+- **Wrapping third-party errors:** only when the user asks for a specific boundary (e.g. API layer) and the handler re-raises or maps to a typed project exception without hiding the cause (`raise … from e`).
+- Custom exception types can live under something like `src/elysium/exceptions.py` when you introduce API or domain boundaries.
 
 ---
 
-## 📦 Dependencies & Environment
+## Logging (detail)
 
-- Pin all ML dependencies (torch, diffusers, transformers) to exact versions
-- Use virtual environments; document CUDA version in README
-- Never commit model weights — reference by URL/hash in config
-- Use `.env` files for API keys and model paths; never hardcode secrets
-- Document GPU memory requirements per model in comments
+- **`LOGURU_LEVEL`** env var overrides default level (see `configure_logging`).
+- Scripts should rely on `import elysium` (or any `from elysium…` import) so logging is configured once.
+- For HTTP services later: you may add a second sink (e.g. JSON) in `log.py` without removing colored stderr for local dev.
 
 ---
 
-## 🚀 Performance Rules
+## TypeScript / JavaScript (if used)
 
-- Cache loaded models — never reload per request
-- Use batching for multiple image requests when possible
-- Resize images to model's expected resolution before inference, not after
-- Profile with `torch.profiler` or `cProfile` before optimizing
-- Use ONNX Runtime or TorchScript for production inference when possible
-- Log slow operations (>500ms) with a warning
+- Strict TypeScript; named exports unless framework requires default.
+- Async: handle errors with `try/catch` or `.catch()` — this does not override Python MUST rules.
 
 ---
 
-## 📝 Documentation Rules
+## API, security, performance, tests (guidelines)
 
-- Every public function needs a docstring: purpose, params, return value, exceptions
-- Document image format expectations: shape `(H, W, C)`, dtype, value range
-- Include example input/output in docstrings for non-trivial transforms
-- Add a `# NOTE:` comment explaining any non-obvious mathematical operations
-- Keep a `CHANGELOG.md` updated with model version bumps
-
----
-
-## 🎨 Code Style
-
-- Max line length: 100 characters
-- Use `ruff` for Python linting and `black` for formatting
-- Use `eslint` + `prettier` for TypeScript
-- Commit messages: `type(scope): description` (e.g., `feat(pipeline): add inpainting support`)
-- Branch naming: `feature/`, `fix/`, `experiment/`, `chore/`
+- REST-style routes, validated uploads (size, magic bytes), no secrets in code.
+- Rate-limit and cap image dimensions for untrusted input.
+- Cache models; batch when useful; profile before micro-optimizing.
+- Test image utilities across shapes/dtypes and edge cases; control seeds for generative checks.
 
 ---
 
-## ⛔ Anti-Patterns to Avoid
+## Style
 
-- ❌ Loading models on every request
-- ❌ Using raw pixel loops in Python (use vectorized NumPy/PyTorch ops)
-- ❌ Storing generated images in memory indefinitely — use TTL/cleanup jobs
-- ❌ Ignoring image orientation EXIF data (causes subtle rotation bugs)
-- ❌ Assuming all images are RGB — always check and convert explicitly
-- ❌ Hard-coding model paths or API keys
-- ❌ Using `print()` for debugging in production code — use `logging`
-- ❌ Returning raw tensor objects from API functions — convert to numpy/PIL first
+- ~100 columns; format/lint with **ruff** / **black** for Python.
+- Commits: `type(scope): description` (e.g. `feat(model): add RL checkpoint save`).
+
+---
+
+## Anti-patterns (project)
+
+- Catching exceptions in Python to log and continue without re-raise (violates MUST).
+- `print()` for diagnostic output in committed code — use **`logger`** from **`elysium.log`**.
+- Stdlib **`logging.getLogger`** in `src/elysium`, `scripts/`, or `tools/`.
+- Editing **`unsloth_compiled_cache/`** or other generated/vendor code to “fix” style — change first-party code or config instead.
+- Loading huge models inside hot request paths.
+- Pixel-level Python loops on full images.

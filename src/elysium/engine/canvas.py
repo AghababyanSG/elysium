@@ -10,7 +10,6 @@ Output: np.ndarray (H, W, 3) float32 in [0, 1], RGB (new array, input never muta
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import cv2
@@ -28,8 +27,6 @@ from elysium.schemas.actions import (
 )
 
 __all__ = ["execute_chunk", "execute_action"]
-
-logger = logging.getLogger(__name__)
 
 _BEZIER_STEPS = 40
 

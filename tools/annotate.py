@@ -250,12 +250,9 @@ class ImageEditor:
         if not self.active_input or not self.input_text:
             return
 
-        try:
-            value = int(self.input_text)
-            sd = self.sliders[self.active_input]
-            self._set_slider_value(self.active_input, max(sd['min'], min(sd['max'], value)))
-        except ValueError:
-            pass
+        value = int(self.input_text)
+        sd = self.sliders[self.active_input]
+        self._set_slider_value(self.active_input, max(sd['min'], min(sd['max'], value)))
 
         self.active_input = None
         self.input_text = ""
