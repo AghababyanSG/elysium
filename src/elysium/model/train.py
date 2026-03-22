@@ -1,4 +1,4 @@
-"""QLoRA fine-tuning for Qwen2.5-VL-3B via Unsloth.
+"""QLoRA fine-tuning for Qwen3.5 via Unsloth.
 
 Trains the model to predict 5-action chunks from (image, instruction) inputs.
 Vision encoder is frozen to fit within 8GB VRAM. Loss is masked to assistant
@@ -12,20 +12,24 @@ Output: models/checkpoints/
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import Any
 
 import os
-import torch
-import yaml
-from huggingface_hub import scan_cache_dir
 
 os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")
 
-__all__ = ["run_training"]
+import torch
+import yaml
+from datasets import load_from_disk
+from huggingface_hub import scan_cache_dir
+from trl import SFTConfig, SFTTrainer
+from unsloth import FastVisionModel
+from unsloth.trainer import UnslothVisionDataCollator
 
-logger = logging.getLogger(__name__)
+from elysium.log import logger
+
+__all__ = ["run_training"]
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -38,7 +42,7 @@ def _build_conversation(sample: dict[str, Any], processor: Any) -> dict[str, Any
 
     Args:
         sample: Record with "messages" and "image" fields.
-        processor: Qwen2.5-VL processor.
+        processor: Qwen3.5 processor.
 
     Returns:
         Dict with "input_ids", "attention_mask", "pixel_values", "labels".
@@ -95,16 +99,6 @@ def run_training(
         epochs: Override epochs from config.
         batch_size: Override batch_size from config.
     """
-    try:
-        from unsloth import FastVisionModel
-        from trl import SFTConfig, SFTTrainer
-        from unsloth.trainer import UnslothVisionDataCollator
-        from datasets import load_from_disk
-    except ImportError as e:
-        raise ImportError(
-            "Training dependencies missing. Install: pip install unsloth trl datasets"
-        ) from e
-
     cfg = _load_config(config_path)
     model_cfg = cfg["model"]
     lora_cfg = cfg["lora"]
@@ -120,8 +114,10 @@ def run_training(
     cached_repos = {r.repo_id for r in scan_cache_dir().repos}
     local_only = model_name in cached_repos
     logger.info(
-        "Loading model %s (4bit=%s, local_files_only=%s)",
-        model_name, model_cfg["load_in_4bit"], local_only,
+        "Loading model {} (4bit={}, local_files_only={})",
+        model_name,
+        model_cfg["load_in_4bit"],
+        local_only,
     )
     model, tokenizer = FastVisionModel.from_pretrained(
         model_name=model_name,
@@ -146,7 +142,7 @@ def run_training(
     )
 
     dataset_path = Path(data_cfg["dataset_path"])
-    logger.info("Loading dataset from %s", dataset_path)
+    logger.info("Loading dataset from {}", dataset_path)
     dataset = load_from_disk(str(dataset_path))
     train_dataset = dataset["train"]
     val_dataset = dataset.get("validation")
@@ -190,8 +186,8 @@ def run_training(
     tokenizer.save_pretrained(str(final_checkpoint))
 
     logger.info(
-        "Training complete. Steps: %d, Loss: %.4f",
+        "Training complete. Steps: {}, Loss: {:.4f}",
         trainer_stats.global_step,
         trainer_stats.training_loss,
     )
-    logger.info("Saved final checkpoint to %s", final_checkpoint)
+    logger.info("Saved final checkpoint to {}", final_checkpoint)

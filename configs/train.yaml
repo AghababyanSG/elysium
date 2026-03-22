@@ -1,5 +1,5 @@
 model:
-  name: "unsloth/Qwen2.5-VL-3B-Instruct"
+  name: "unsloth/Qwen3.5-4B"
   load_in_4bit: true
 
 lora:
@@ -42,3 +42,14 @@ data:
 inference:
   max_chunks: 60
   ensemble_execute_k: 1
+
+rl:
+  enabled: true
+  epochs: 3
+  learning_rate: 1.0e-5
+  temperature: 0.7
+  alpha: 0.5
+  beta: 0.5
+  baseline_decay: 0.99
+  max_new_tokens: 1024
+  warmup_sft_first: true

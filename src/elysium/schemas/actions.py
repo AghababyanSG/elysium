@@ -5,7 +5,27 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
-__all__ = ["BrushAction", "PencilAction", "EraserAction", "FillAction", "NoopAction", "Action", "ActionChunk"]
+__all__ = [
+    "BrushAction", "PencilAction", "EraserAction", "FillAction", "NoopAction",
+    "Action", "ActionChunk", "SYSTEM_PROMPT",
+]
+
+SYSTEM_PROMPT = (
+    "You are a canvas drawing assistant. "
+    "Given an image of a canvas and a user instruction, respond with ONLY a JSON object "
+    "specifying exactly 5 sequential drawing actions to apply to the canvas. "
+    "Do not explain, describe, or add any text outside the JSON.\n\n"
+    "Output format:\n"
+    "{\"actions\":[{...},{...},{...},{...},{...}]}\n\n"
+    "Available action types and their required fields:\n"
+    "- \"brush\": color_rgb ([R,G,B] ints 0-255), stroke_size (int 1-50), "
+    "trajectory ([[x,y],...] pixel coords 0-256)\n"
+    "- \"pencil\": color_rgb ([R,G,B] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256)\n"
+    "- \"eraser\": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords 0-256)\n"
+    "- \"fill\": color_rgb ([R,G,B] ints 0-255), position ([x,y] pixel coords 0-256)\n"
+    "- \"noop\": no additional fields — use when no more drawing is needed\n\n"
+    "Respond with valid JSON only."
+)
 
 _TOOLS = Literal["brush", "pencil", "eraser", "fill", "noop"]
 
