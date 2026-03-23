@@ -20,7 +20,16 @@ from typing import Any
 
 import numpy as np
 
-from elysium.schemas.actions import Action, ActionChunk, BrushAction, EraserAction, FillAction, NoopAction, PencilAction
+from elysium.schemas.actions import (
+    Action,
+    ActionChunk,
+    BrushAction,
+    ColorAdjustAction,
+    EraserAction,
+    FillAction,
+    NoopAction,
+    PencilAction,
+)
 
 __all__ = ["compute_reward", "action_reward", "visual_reward"]
 
@@ -82,6 +91,13 @@ def _single_action_reward(pred: Action, gt: Action) -> float:
 
     if isinstance(pred, NoopAction):
         return 1.0
+
+    if isinstance(pred, ColorAdjustAction) and isinstance(gt, ColorAdjustAction):
+        b_diff = abs(pred.brightness - gt.brightness) / 200.0
+        c_diff = abs(pred.contrast - gt.contrast) / 1.5
+        s_diff = abs(pred.saturation - gt.saturation) / 2.0
+        penalty = (b_diff + c_diff + s_diff) / 3.0
+        return 1.0 - 2.0 * penalty
 
     penalty = 0.0
     terms = 0

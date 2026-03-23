@@ -6,8 +6,15 @@ from typing import Literal
 from pydantic import BaseModel, field_validator
 
 __all__ = [
-    "BrushAction", "PencilAction", "EraserAction", "FillAction", "NoopAction",
-    "Action", "ActionChunk", "SYSTEM_PROMPT",
+    "BrushAction",
+    "PencilAction",
+    "EraserAction",
+    "FillAction",
+    "ColorAdjustAction",
+    "NoopAction",
+    "Action",
+    "ActionChunk",
+    "SYSTEM_PROMPT",
 ]
 
 SYSTEM_PROMPT = (
@@ -23,12 +30,13 @@ SYSTEM_PROMPT = (
     "- \"pencil\": color_rgb ([R,G,B] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256)\n"
     "- \"eraser\": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords 0-256)\n"
     "- \"fill\": color_rgb ([R,G,B] ints 0-255), position ([x,y] pixel coords 0-256)\n"
+    "- \"color_adjust\": brightness (int -100 to 100), contrast (float 0.5-2.0), "
+    "saturation (float 0.0-2.0), exposure (int -100 to 100, default 0), "
+    "highlights (int -100 to 100, default 0), shadows (int -100 to 100, default 0), "
+    "hue_shift (int -180 to 180, default 0), temperature (int -100 to 100, default 0)\n"
     "- \"noop\": no additional fields — use when no more drawing is needed\n\n"
     "Respond with valid JSON only."
 )
-
-_TOOLS = Literal["brush", "pencil", "eraser", "fill", "noop"]
-
 
 class BrushAction(BaseModel):
     action_type: Literal["brush"]
@@ -99,11 +107,71 @@ class FillAction(BaseModel):
         return v
 
 
+class ColorAdjustAction(BaseModel):
+    action_type: Literal["color_adjust"]
+    brightness: int
+    contrast: float
+    saturation: float
+    exposure: int = 0
+    highlights: int = 0
+    shadows: int = 0
+    hue_shift: int = 0
+    temperature: int = 0
+
+    @field_validator("brightness")
+    @classmethod
+    def _validate_brightness(cls, v: int) -> int:
+        assert -100 <= v <= 100
+        return v
+
+    @field_validator("contrast")
+    @classmethod
+    def _validate_contrast(cls, v: float) -> float:
+        assert 0.5 <= v <= 2.0
+        return v
+
+    @field_validator("saturation")
+    @classmethod
+    def _validate_saturation(cls, v: float) -> float:
+        assert 0.0 <= v <= 2.0
+        return v
+
+    @field_validator("exposure")
+    @classmethod
+    def _validate_exposure(cls, v: int) -> int:
+        assert -100 <= v <= 100
+        return v
+
+    @field_validator("highlights")
+    @classmethod
+    def _validate_highlights(cls, v: int) -> int:
+        assert -100 <= v <= 100
+        return v
+
+    @field_validator("shadows")
+    @classmethod
+    def _validate_shadows(cls, v: int) -> int:
+        assert -100 <= v <= 100
+        return v
+
+    @field_validator("hue_shift")
+    @classmethod
+    def _validate_hue_shift(cls, v: int) -> int:
+        assert -180 <= v <= 180
+        return v
+
+    @field_validator("temperature")
+    @classmethod
+    def _validate_temperature(cls, v: int) -> int:
+        assert -100 <= v <= 100
+        return v
+
+
 class NoopAction(BaseModel):
     action_type: Literal["noop"]
 
 
-Action = BrushAction | PencilAction | EraserAction | FillAction | NoopAction
+Action = BrushAction | PencilAction | EraserAction | FillAction | ColorAdjustAction | NoopAction
 
 
 def parse_action(data: dict) -> Action:
@@ -114,6 +182,7 @@ def parse_action(data: dict) -> Action:
         "pencil": PencilAction,
         "eraser": EraserAction,
         "fill": FillAction,
+        "color_adjust": ColorAdjustAction,
         "noop": NoopAction,
     }
     if tool not in dispatch:

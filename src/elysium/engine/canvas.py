@@ -15,10 +15,12 @@ from typing import Any
 import cv2
 import numpy as np
 
+from elysium.log import logger
 from elysium.schemas.actions import (
     Action,
     ActionChunk,
     BrushAction,
+    ColorAdjustAction,
     EraserAction,
     FillAction,
     NoopAction,
@@ -26,9 +28,58 @@ from elysium.schemas.actions import (
     parse_action,
 )
 
-__all__ = ["execute_chunk", "execute_action"]
+__all__ = ["execute_chunk", "execute_action", "apply_color_adjust_rgb01"]
 
 _BEZIER_STEPS = 40
+
+
+def apply_color_adjust_rgb01(
+    canvas: np.ndarray,
+    brightness: int,
+    contrast: float,
+    saturation: float,
+    *,
+    exposure: int = 0,
+    highlights: int = 0,
+    shadows: int = 0,
+    hue_shift: int = 0,
+    temperature: int = 0,
+) -> np.ndarray:
+    assert canvas.ndim == 3 and canvas.shape[2] == 3
+    img = canvas.astype(np.float32).copy()
+
+    if exposure != 0:
+        img = img * (2.0 ** (exposure / 50.0))
+
+    img = img + brightness / 255.0
+
+    mean = float(img.mean())
+    img = (img - mean) * contrast + mean
+
+    if highlights != 0 or shadows != 0:
+        lum = img.mean(axis=2, keepdims=True)
+        if highlights != 0:
+            mask_h = np.clip((lum - 0.5) * 2.0, 0.0, 1.0)
+            img = img + (highlights / 200.0) * mask_h
+        if shadows != 0:
+            mask_s = np.clip(1.0 - lum / 0.5, 0.0, 1.0)
+            img = img + (shadows / 200.0) * mask_s
+
+    if temperature != 0:
+        delta = temperature / 200.0
+        img[:, :, 0] = img[:, :, 0] + delta
+        img[:, :, 2] = img[:, :, 2] - delta
+
+    img = np.clip(img, 0.0, 1.0)
+
+    hsv = cv2.cvtColor((img * 255.0).astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+
+    if hue_shift != 0:
+        hsv[:, :, 0] = (hsv[:, :, 0].astype(np.int16) + hue_shift // 2) % 180
+
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation, 0.0, 255.0)
+    rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+    return rgb.astype(np.float32) / 255.0
 
 
 def _bezier_points(control_pts: list[tuple[int, int]], steps: int = _BEZIER_STEPS) -> list[tuple[int, int]]:
@@ -121,10 +172,18 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
     if isinstance(action, NoopAction):
         return canvas.copy()
 
+    if isinstance(action, ColorAdjustAction):
+        return apply_color_adjust_rgb01(canvas, action.brightness, action.contrast, action.saturation)
+
     img_bgr = _to_bgr_uint8(canvas)
 
     if isinstance(action, BrushAction):
-        _draw_stroke(img_bgr, action.trajectory, _color_bgr(action.color_rgb), action.stroke_size)
+        _draw_stroke(
+            img_bgr,
+            action.trajectory,
+            _color_bgr(action.color_rgb),
+            max(1, 2 * action.stroke_size),
+        )
 
     elif isinstance(action, PencilAction):
         _draw_stroke(img_bgr, action.trajectory, _color_bgr(action.color_rgb), thickness=1)
@@ -137,10 +196,11 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
         pts = [(p[0], p[1]) for p in action.trajectory]
         smooth = _bezier_points(pts)
         mask = np.zeros(img_bgr.shape[:2], dtype=np.uint8)
+        eraser_thickness = max(1, 2 * action.stroke_size)
         for i in range(len(smooth) - 1):
-            cv2.line(mask, smooth[i], smooth[i + 1], 255, action.stroke_size)
+            cv2.line(mask, smooth[i], smooth[i + 1], 255, eraser_thickness)
         if len(smooth) == 1:
-            cv2.circle(mask, smooth[0], action.stroke_size // 2, 255, -1)
+            cv2.circle(mask, smooth[0], max(1, action.stroke_size), 255, -1)
         img_bgr[mask > 0] = orig_bgr[mask > 0]
 
     elif isinstance(action, FillAction):
