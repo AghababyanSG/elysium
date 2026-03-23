@@ -26,6 +26,7 @@ SYSTEM_PROMPT = (
     "{\"actions\":[{...},{...},{...},{...},{...}]}\n\n"
     "Available action types and their required fields:\n"
     "- \"brush\": color_rgba ([R,G,B,A] ints 0-255), stroke_size (int 1-50), "
+    "hardness (int 0-100, 0 = invisible, 100 = hard edge like a stamp), "
     "trajectory ([[x,y],...] pixel coords 0-256)\n"
     "- \"pencil\": color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256)\n"
     "- \"eraser\": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords 0-256)\n"
@@ -43,15 +44,20 @@ class BrushAction(BaseModel):
     color_rgba: tuple[int, int, int, int]
     stroke_size: int
     trajectory: list[tuple[int, int]]
+    hardness: int = 100
 
     @model_validator(mode="before")
     @classmethod
     def _legacy_color_rgb(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
+        if not isinstance(data, dict):
+            return data
+        if "color_rgba" not in data and "color_rgb" in data:
             cr = data["color_rgb"]
             if isinstance(cr, (list, tuple)) and len(cr) == 3:
                 data = {k: v for k, v in data.items() if k != "color_rgb"}
                 data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+        if "hardness" not in data:
+            data = {**data, "hardness": 100}
         return data
 
     @field_validator("color_rgba")
@@ -64,6 +70,12 @@ class BrushAction(BaseModel):
     @classmethod
     def _validate_size(cls, v: int) -> int:
         assert 1 <= v <= 50, "Stroke size must be in [1, 50]"
+        return v
+
+    @field_validator("hardness")
+    @classmethod
+    def _validate_hardness(cls, v: int) -> int:
+        assert 0 <= v <= 100, "Hardness must be in [0, 100]"
         return v
 
     @field_validator("trajectory")

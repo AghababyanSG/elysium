@@ -15,7 +15,7 @@ _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from elysium.engine.canvas import apply_color_adjust_rgb01
+from elysium.engine.canvas import apply_color_adjust_rgb01, brush_dab_mask, brush_segment_mask
 
 
 def _blend_bgr_mask_inplace(
@@ -130,6 +130,7 @@ class ImageEditor:
         self.drawing = False
         self.tool = "brush"
         self.brush_size = 5
+        self.brush_hardness = 100
         self.color = [255, 0, 0, 255]
         self.prev_color = [255, 0, 0, 255]
         self.prev_pos = None
@@ -215,6 +216,8 @@ class ImageEditor:
                 return self.color[2]
             case "A":
                 return self.color[3]
+            case "Hard":
+                return self.brush_hardness
             case "Size":
                 return self.brush_size
             case "Zoom":
@@ -248,6 +251,8 @@ class ImageEditor:
                 self.color[2] = value
             case "A":
                 self.color[3] = value
+            case "Hard":
+                self.brush_hardness = value
             case "Size":
                 self.brush_size = value
             case "Zoom":
@@ -373,25 +378,50 @@ class ImageEditor:
     ) -> None:
         x1, y1 = pos1
         x2, y2 = pos2
+        h, w = self.canvas_array.shape[:2]
         if pencil:
             thickness = max(1, size)
-        else:
+            mask = np.zeros((h, w), np.uint8)
+            cv2.line(mask, (x1, y1), (x2, y2), 255, thickness, lineType=cv2.LINE_AA)
+            _blend_bgr_mask_inplace(self.canvas_array, mask, color[0], color[1], color[2], color[3])
+            self.log_operation(self.tool, size, color, (x1, y1), (x2, y2))
+            self.canvas_dirty = True
+            return
+        if self.brush_hardness <= 0:
+            return
+        if self.brush_hardness >= 100:
             thickness = max(1, 2 * size)
-        h, w = self.canvas_array.shape[:2]
-        mask = np.zeros((h, w), np.uint8)
-        cv2.line(mask, (x1, y1), (x2, y2), 255, thickness, lineType=cv2.LINE_AA)
-        _blend_bgr_mask_inplace(self.canvas_array, mask, color[0], color[1], color[2], color[3])
-        self.log_operation(self.tool, size, color, (x1, y1), (x2, y2))
+            mask = np.zeros((h, w), np.uint8)
+            cv2.line(mask, (x1, y1), (x2, y2), 255, thickness, lineType=cv2.LINE_AA)
+            m = mask.astype(np.float32) / 255.0
+        else:
+            m = brush_segment_mask(h, w, x1, y1, x2, y2, size, self.brush_hardness)
+        _blend_bgr_mask_inplace(self.canvas_array, m, color[0], color[1], color[2], color[3])
+        self.log_operation(self.tool, size, color, (x1, y1), (x2, y2), hardness=self.brush_hardness)
         self.canvas_dirty = True
 
     def draw_circle(self, pos: tuple[int, int], size: int, color: tuple[int, int, int, int]) -> None:
         x, y = pos
-        r = max(1, size)
         h, w = self.canvas_array.shape[:2]
-        mask = np.zeros((h, w), np.uint8)
-        cv2.circle(mask, (x, y), r, 255, -1)
-        _blend_bgr_mask_inplace(self.canvas_array, mask, color[0], color[1], color[2], color[3])
-        self.log_operation(self.tool, size, color, (x, y), (x, y))
+        if self.tool == "pencil":
+            r = max(1, size)
+            mask = np.zeros((h, w), np.uint8)
+            cv2.circle(mask, (x, y), r, 255, -1)
+            _blend_bgr_mask_inplace(self.canvas_array, mask, color[0], color[1], color[2], color[3])
+            self.log_operation(self.tool, size, color, (x, y), (x, y))
+            self.canvas_dirty = True
+            return
+        if self.brush_hardness <= 0:
+            return
+        if self.brush_hardness >= 100:
+            r = max(1, size)
+            mask = np.zeros((h, w), np.uint8)
+            cv2.circle(mask, (x, y), r, 255, -1)
+            m = mask.astype(np.float32) / 255.0
+        else:
+            m = brush_dab_mask(h, w, x, y, size, self.brush_hardness)
+        _blend_bgr_mask_inplace(self.canvas_array, m, color[0], color[1], color[2], color[3])
+        self.log_operation(self.tool, size, color, (x, y), (x, y), hardness=self.brush_hardness)
         self.canvas_dirty = True
 
     def _reset_color_adjust(self) -> None:
@@ -601,6 +631,17 @@ class ImageEditor:
                 50,
             )
             y += 42
+        if self.tool == "brush":
+            self.sliders["Hard"] = self.draw_slider(
+                ui_x + ly.pad,
+                y,
+                ly.slider_w,
+                "Hard",
+                (150, 130, 90),
+                0,
+                100,
+            )
+            y += 42
 
         if self.tool == "color_adjust":
             for cfg in (
@@ -642,8 +683,9 @@ class ImageEditor:
         t = self.theme
         elapsed = int(time.time() - self.start_time)
         hx = "#{:02x}{:02x}{:02x}".format(self.color[0], self.color[1], self.color[2])
+        hard_s = f"  hard {self.brush_hardness}" if self.tool == "brush" else ""
         line = (
-            f"{self.tool}  |  size {self.brush_size}  |  {hx} α{self.color[3]}  |  "
+            f"{self.tool}  |  size {self.brush_size}{hard_s}  |  {hx} α{self.color[3]}  |  "
             f"frames {self.frame_id}  |  {elapsed}s"
         )
         surf = self.font_sm.render(line, True, t.text_muted)

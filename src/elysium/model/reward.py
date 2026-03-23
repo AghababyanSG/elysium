@@ -77,6 +77,10 @@ def _size_distance(s1: int, s2: int) -> float:
     return abs(s1 - s2) / _SIZE_MAX
 
 
+def _hardness_distance(h1: int, h2: int) -> float:
+    return abs(h1 - h2) / 100.0
+
+
 def _single_action_reward(pred: Action, gt: Action) -> float:
     """Reward for a single action pair in [-1, 1].
 
@@ -117,6 +121,10 @@ def _single_action_reward(pred: Action, gt: Action) -> float:
         gt, (BrushAction, EraserAction)
     ):
         penalty += _size_distance(pred.stroke_size, gt.stroke_size)
+        terms += 1
+
+    if isinstance(pred, BrushAction) and isinstance(gt, BrushAction):
+        penalty += _hardness_distance(pred.hardness, gt.hardness)
         terms += 1
 
     if isinstance(pred, FillAction) and isinstance(gt, FillAction):

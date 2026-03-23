@@ -28,7 +28,13 @@ from elysium.schemas.actions import (
     parse_action,
 )
 
-__all__ = ["execute_chunk", "execute_action", "apply_color_adjust_rgb01"]
+__all__ = [
+    "execute_chunk",
+    "execute_action",
+    "apply_color_adjust_rgb01",
+    "brush_segment_mask",
+    "brush_dab_mask",
+]
 
 _BEZIER_STEPS = 40
 
@@ -140,6 +146,157 @@ def _stroke_coverage_mask(
     return mask.astype(np.float32) / 255.0
 
 
+def _composite_brush_coverage(base: np.ndarray, add: np.ndarray) -> None:
+    base[:] = 1.0 - (1.0 - base) * (1.0 - add)
+
+
+def _mesh_dist_sq_to_segment(
+    px: np.ndarray,
+    py: np.ndarray,
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+) -> np.ndarray:
+    abx = bx - ax
+    aby = by - ay
+    apx = px - ax
+    apy = py - ay
+    ab2 = abx * abx + aby * aby
+    t = np.where(
+        ab2 < 1e-12,
+        0.0,
+        np.clip((apx * abx + apy * aby) / ab2, 0.0, 1.0),
+    )
+    qx = ax + t * abx
+    qy = ay + t * aby
+    dx = px - qx
+    dy = py - qy
+    return dx * dx + dy * dy
+
+
+def _brush_radial_weight(d: np.ndarray, radius: float, hardness: int) -> np.ndarray:
+    if hardness <= 0:
+        return np.zeros_like(d, dtype=np.float32)
+    h_frac = hardness / 100.0
+    r = radius + 1e-6
+    t = d / r
+    t = np.clip(t, 0.0, 1.0)
+    if h_frac >= 0.9999:
+        return np.where(d <= radius + 1e-6, np.float32(1.0), np.float32(0.0))
+    core = r * h_frac
+    inner = d <= core + 1e-6
+    outer = (d > core) & (d <= radius + 1e-6)
+    band = radius - core + 1e-8
+    fall = np.clip((radius - d) / band, 0.0, 1.0)
+    return np.where(inner, np.float32(1.0), np.where(outer, fall.astype(np.float32), np.float32(0.0)))
+
+
+def brush_segment_mask(
+    h: int,
+    w: int,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    stroke_size: int,
+    hardness: int,
+) -> np.ndarray:
+    if hardness <= 0:
+        return np.zeros((h, w), dtype=np.float32)
+    thickness = max(1, 2 * stroke_size)
+    if hardness >= 100:
+        m = np.zeros((h, w), dtype=np.uint8)
+        cv2.line(m, (x1, y1), (x2, y2), 255, thickness, lineType=cv2.LINE_AA)
+        return m.astype(np.float32) / 255.0
+    radius = float(max(1, stroke_size))
+    ax, ay = float(x1), float(y1)
+    bx, by = float(x2), float(y2)
+    pad = int(np.ceil(radius)) + 2
+    xmin = int(np.floor(min(ax, bx) - pad))
+    xmax = int(np.ceil(max(ax, bx) + pad))
+    ymin = int(np.floor(min(ay, by) - pad))
+    ymax = int(np.ceil(max(ay, by) + pad))
+    xmin = max(0, xmin)
+    xmax = min(w, xmax + 1)
+    ymin = max(0, ymin)
+    ymax = min(h, ymax + 1)
+    out = np.zeros((h, w), dtype=np.float32)
+    if xmin >= xmax or ymin >= ymax:
+        return out
+    xs = np.arange(xmin, xmax, dtype=np.float64)
+    ys = np.arange(ymin, ymax, dtype=np.float64)
+    xx, yy = np.meshgrid(xs, ys)
+    px = xx + 0.5
+    py = yy + 0.5
+    dsq = _mesh_dist_sq_to_segment(px, py, ax, ay, bx, by)
+    d = np.sqrt(dsq)
+    wts = _brush_radial_weight(d, radius, hardness)
+    out[ymin:ymax, xmin:xmax] = wts.astype(np.float32)
+    return out
+
+
+def brush_dab_mask(
+    h: int,
+    w: int,
+    cx: int,
+    cy: int,
+    stroke_size: int,
+    hardness: int,
+) -> np.ndarray:
+    if hardness <= 0:
+        return np.zeros((h, w), dtype=np.float32)
+    r_int = max(1, stroke_size)
+    if hardness >= 100:
+        m = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(m, (cx, cy), r_int, 255, -1)
+        return m.astype(np.float32) / 255.0
+    radius = float(r_int)
+    pad = int(np.ceil(radius)) + 2
+    xmin = max(0, cx - pad)
+    xmax = min(w, cx + pad + 1)
+    ymin = max(0, cy - pad)
+    ymax = min(h, cy + pad + 1)
+    out = np.zeros((h, w), dtype=np.float32)
+    if xmin >= xmax or ymin >= ymax:
+        return out
+    xs = np.arange(xmin, xmax, dtype=np.float64)
+    ys = np.arange(ymin, ymax, dtype=np.float64)
+    xx, yy = np.meshgrid(xs, ys)
+    px = xx + 0.5
+    py = yy + 0.5
+    d = np.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+    wts = _brush_radial_weight(d, radius, hardness)
+    out[ymin:ymax, xmin:xmax] = wts.astype(np.float32)
+    return out
+
+
+def _brush_stroke_coverage_mask(
+    h: int,
+    w: int,
+    trajectory: list[list[int]],
+    stroke_size: int,
+    hardness: int,
+) -> np.ndarray:
+    if hardness <= 0:
+        return np.zeros((h, w), dtype=np.float32)
+    if hardness >= 100:
+        thick = max(1, 2 * stroke_size)
+        return _stroke_coverage_mask(h, w, trajectory, thick)
+    pts = [(p[0], p[1]) for p in trajectory]
+    smooth = _bezier_points(pts)
+    mask = np.zeros((h, w), dtype=np.float32)
+    if len(smooth) == 1:
+        x0, y0 = int(smooth[0][0]), int(smooth[0][1])
+        return brush_dab_mask(h, w, x0, y0, stroke_size, hardness)
+    for i in range(len(smooth) - 1):
+        x1, y1 = int(smooth[i][0]), int(smooth[i][1])
+        x2, y2 = int(smooth[i + 1][0]), int(smooth[i + 1][1])
+        seg = brush_segment_mask(h, w, x1, y1, x2, y2, stroke_size, hardness)
+        _composite_brush_coverage(mask, seg)
+    return mask
+
+
 def _flood_fill_region_mask(img_bgr: np.ndarray, position: tuple[int, int]) -> np.ndarray:
     h, w = img_bgr.shape[:2]
     flood_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
@@ -190,7 +347,7 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
     base = canvas.astype(np.float32).copy()
 
     if isinstance(action, BrushAction):
-        cov = _stroke_coverage_mask(h, w, action.trajectory, max(1, 2 * action.stroke_size))
+        cov = _brush_stroke_coverage_mask(h, w, action.trajectory, action.stroke_size, action.hardness)
         return _blend_rgba_on_rgb01(base, cov, action.color_rgba)
 
     if isinstance(action, PencilAction):
