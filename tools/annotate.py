@@ -18,6 +18,23 @@ if str(_SRC) not in sys.path:
 from elysium.engine.canvas import apply_color_adjust_rgb01
 
 
+def _blend_bgr_mask_inplace(
+    canvas_bgr: np.ndarray,
+    mask: np.ndarray,
+    r: int,
+    g: int,
+    b: int,
+    a: int,
+) -> None:
+    mf = mask.astype(np.float32) / 255.0 if mask.dtype == np.uint8 else mask.astype(np.float32)
+    alpha = mf * (float(a) / 255.0)
+    a3 = alpha[..., np.newaxis]
+    fg = np.array([b, g, r], dtype=np.float32)
+    base = canvas_bgr.astype(np.float32)
+    out = base * (1.0 - a3) + fg * a3
+    canvas_bgr[:] = np.clip(out, 0, 255).astype(np.uint8)
+
+
 @dataclass(frozen=True)
 class Theme:
     bg_canvas: tuple[int, int, int]
@@ -113,8 +130,8 @@ class ImageEditor:
         self.drawing = False
         self.tool = "brush"
         self.brush_size = 5
-        self.color = [255, 0, 0]
-        self.prev_color = [255, 0, 0]
+        self.color = [255, 0, 0, 255]
+        self.prev_color = [255, 0, 0, 255]
         self.prev_pos = None
 
         self.adj_brightness = 0
@@ -196,6 +213,8 @@ class ImageEditor:
                 return self.color[1]
             case "B":
                 return self.color[2]
+            case "A":
+                return self.color[3]
             case "Size":
                 return self.brush_size
             case "Zoom":
@@ -227,6 +246,8 @@ class ImageEditor:
                 self.color[1] = value
             case "B":
                 self.color[2] = value
+            case "A":
+                self.color[3] = value
             case "Size":
                 self.brush_size = value
             case "Zoom":
@@ -308,8 +329,27 @@ class ImageEditor:
         print(f"Log saved: {log_path} ({len(self.operations)} operations)")
 
     def flood_fill(self, x: int, y: int) -> None:
-        mask = np.zeros((self.canvas_size + 2, self.canvas_size + 2), np.uint8)
-        cv2.floodFill(self.canvas_array, mask, (x, y), self.color[::-1], loDiff=(10, 10, 10), upDiff=(10, 10, 10))
+        h, w = self.canvas_array.shape[:2]
+        flood_mask = np.zeros((h + 2, w + 2), np.uint8)
+        flags = cv2.FLOODFILL_MASK_ONLY | (255 << 8)
+        cv2.floodFill(
+            self.canvas_array.copy(),
+            flood_mask,
+            (x, y),
+            (0, 0, 0),
+            loDiff=(10, 10, 10),
+            upDiff=(10, 10, 10),
+            flags=flags,
+        )
+        region = flood_mask[1 : h + 1, 1 : w + 1]
+        _blend_bgr_mask_inplace(
+            self.canvas_array,
+            region,
+            self.color[0],
+            self.color[1],
+            self.color[2],
+            self.color[3],
+        )
         self.log_operation("fill", None, tuple(self.color), (x, y), (x, y))
         self.canvas_dirty = True
 
@@ -327,7 +367,7 @@ class ImageEditor:
         pos1: tuple[int, int],
         pos2: tuple[int, int],
         size: int,
-        color: tuple[int, ...],
+        color: tuple[int, int, int, int],
         *,
         pencil: bool = False,
     ) -> None:
@@ -337,14 +377,20 @@ class ImageEditor:
             thickness = max(1, size)
         else:
             thickness = max(1, 2 * size)
-        cv2.line(self.canvas_array, (x1, y1), (x2, y2), color[::-1], thickness)
+        h, w = self.canvas_array.shape[:2]
+        mask = np.zeros((h, w), np.uint8)
+        cv2.line(mask, (x1, y1), (x2, y2), 255, thickness, lineType=cv2.LINE_AA)
+        _blend_bgr_mask_inplace(self.canvas_array, mask, color[0], color[1], color[2], color[3])
         self.log_operation(self.tool, size, color, (x1, y1), (x2, y2))
         self.canvas_dirty = True
 
-    def draw_circle(self, pos: tuple[int, int], size: int, color: tuple[int, ...]) -> None:
+    def draw_circle(self, pos: tuple[int, int], size: int, color: tuple[int, int, int, int]) -> None:
         x, y = pos
         r = max(1, size)
-        cv2.circle(self.canvas_array, (x, y), r, color[::-1], -1)
+        h, w = self.canvas_array.shape[:2]
+        mask = np.zeros((h, w), np.uint8)
+        cv2.circle(mask, (x, y), r, 255, -1)
+        _blend_bgr_mask_inplace(self.canvas_array, mask, color[0], color[1], color[2], color[3])
         self.log_operation(self.tool, size, color, (x, y), (x, y))
         self.canvas_dirty = True
 
@@ -452,6 +498,24 @@ class ImageEditor:
             "max": max_value,
         }
 
+    def _draw_checker_rect(self, rect: pygame.Rect, cell: int = 6) -> None:
+        c1, c2 = (200, 200, 200), (120, 120, 120)
+        for ix in range(rect.left, rect.right, cell):
+            for iy in range(rect.top, rect.bottom, cell):
+                c = c1 if (((ix - rect.left) // cell) + ((iy - rect.top) // cell)) % 2 == 0 else c2
+                pygame.draw.rect(
+                    self.screen,
+                    c,
+                    (ix, iy, min(cell, rect.right - ix), min(cell, rect.bottom - iy)),
+                )
+
+    def _blit_rgba_swatch(self, rect: pygame.Rect, rgba: list[int]) -> None:
+        self._draw_checker_rect(rect)
+        ov = pygame.Surface((rect.width, rect.height))
+        ov.fill((rgba[0], rgba[1], rgba[2]))
+        ov.set_alpha(int(rgba[3]))
+        self.screen.blit(ov, rect.topleft)
+
     def draw_ui(self) -> None:
         t = self.theme
         ly = self.layout
@@ -498,9 +562,9 @@ class ImageEditor:
         sw = ly.swatch
         cur_rect = pygame.Rect(ui_x + ly.pad, y, sw, sw)
         prev_rect = pygame.Rect(cur_rect.right + ly.swatch_gap, y, sw, sw)
-        pygame.draw.rect(self.screen, tuple(self.prev_color), prev_rect)
+        self._blit_rgba_swatch(prev_rect, self.prev_color)
         pygame.draw.rect(self.screen, t.input_border, prev_rect, 2)
-        pygame.draw.rect(self.screen, tuple(self.color), cur_rect)
+        self._blit_rgba_swatch(cur_rect, self.color)
         pygame.draw.rect(self.screen, t.accent, cur_rect, 2)
         hint = self.font_sm.render("prev | cur", True, t.text_muted)
         self.screen.blit(hint, (prev_rect.right + ly.pad, y + sw // 2 - 6))
@@ -514,6 +578,7 @@ class ImageEditor:
                 {"label": "R", "color": (200, 60, 60), "min": 0, "max": 255},
                 {"label": "G", "color": (60, 200, 60), "min": 0, "max": 255},
                 {"label": "B", "color": (60, 60, 200), "min": 0, "max": 255},
+                {"label": "A", "color": (160, 160, 170), "min": 0, "max": 255},
             ):
                 self.sliders[cfg["label"]] = self.draw_slider(
                     ui_x + ly.pad,
@@ -577,7 +642,10 @@ class ImageEditor:
         t = self.theme
         elapsed = int(time.time() - self.start_time)
         hx = "#{:02x}{:02x}{:02x}".format(self.color[0], self.color[1], self.color[2])
-        line = f"{self.tool}  |  size {self.brush_size}  |  {hx}  |  frames {self.frame_id}  |  {elapsed}s"
+        line = (
+            f"{self.tool}  |  size {self.brush_size}  |  {hx} α{self.color[3]}  |  "
+            f"frames {self.frame_id}  |  {elapsed}s"
+        )
         surf = self.font_sm.render(line, True, t.text_muted)
         self.screen.blit(surf, (self.layout.pad, self.window_height - self.layout.status_h + 6))
 
@@ -672,7 +740,7 @@ class ImageEditor:
         if 0 <= cx < self.canvas_size and 0 <= cy < self.canvas_size:
             self.prev_color = list(self.color)
             b, g, r = self.canvas_array[cy, cx]
-            self.color = [int(r), int(g), int(b)]
+            self.color = [int(r), int(g), int(b), 255]
 
     def handle_canvas_mouse(self, pos: tuple[int, int], event_type: str) -> None:
         zoom = self.zoom_pct / 100.0

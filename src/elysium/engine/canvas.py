@@ -124,36 +124,47 @@ def _from_bgr_uint8(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
 
-def _color_bgr(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
-    return (rgb[2], rgb[1], rgb[0])
-
-
-def _draw_stroke(
-    img_bgr: np.ndarray,
+def _stroke_coverage_mask(
+    h: int,
+    w: int,
     trajectory: list[list[int]],
-    color_bgr: tuple[int, int, int],
     thickness: int,
-) -> None:
-    """Draw a Bezier-interpolated stroke onto img_bgr in-place."""
+) -> np.ndarray:
+    mask = np.zeros((h, w), dtype=np.uint8)
     pts = [(p[0], p[1]) for p in trajectory]
     smooth = _bezier_points(pts)
     for i in range(len(smooth) - 1):
-        cv2.line(img_bgr, smooth[i], smooth[i + 1], color_bgr, thickness, lineType=cv2.LINE_AA)
+        cv2.line(mask, smooth[i], smooth[i + 1], 255, thickness, lineType=cv2.LINE_AA)
     if len(smooth) == 1:
-        cv2.circle(img_bgr, smooth[0], max(1, thickness // 2), color_bgr, -1)
+        cv2.circle(mask, smooth[0], max(1, thickness // 2), 255, -1)
+    return mask.astype(np.float32) / 255.0
 
 
-def _flood_fill(
-    img_bgr: np.ndarray,
-    position: tuple[int, int],
-    color_bgr: tuple[int, int, int],
-) -> np.ndarray:
-    """Flood-fill from position with color. Returns modified copy."""
+def _flood_fill_region_mask(img_bgr: np.ndarray, position: tuple[int, int]) -> np.ndarray:
     h, w = img_bgr.shape[:2]
-    mask = np.zeros((h + 2, w + 2), np.uint8)
-    img_copy = img_bgr.copy()
-    cv2.floodFill(img_copy, mask, position, color_bgr, loDiff=(10,) * 3, upDiff=(10,) * 3)
-    return img_copy
+    flood_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    flags = cv2.FLOODFILL_MASK_ONLY | (255 << 8)
+    cv2.floodFill(
+        img_bgr.copy(),
+        flood_mask,
+        position,
+        (0, 0, 0),
+        loDiff=(10, 10, 10),
+        upDiff=(10, 10, 10),
+        flags=flags,
+    )
+    return flood_mask[1 : h + 1, 1 : w + 1].astype(np.float32) / 255.0
+
+
+def _blend_rgba_on_rgb01(rgb: np.ndarray, coverage: np.ndarray, rgba: tuple[int, int, int, int]) -> np.ndarray:
+    r, g, b, a = rgba
+    fr = np.float32(r) / 255.0
+    fg = np.float32(g) / 255.0
+    fb = np.float32(b) / 255.0
+    alpha = coverage * (np.float32(a) / 255.0)
+    a3 = alpha[..., np.newaxis]
+    fg_rgb = np.array([fr, fg, fb], dtype=np.float32)
+    return np.clip(rgb * (1.0 - a3) + fg_rgb * a3, 0.0, 1.0)
 
 
 def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | None = None) -> np.ndarray:
@@ -175,20 +186,19 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
     if isinstance(action, ColorAdjustAction):
         return apply_color_adjust_rgb01(canvas, action.brightness, action.contrast, action.saturation)
 
-    img_bgr = _to_bgr_uint8(canvas)
+    h, w = canvas.shape[:2]
+    base = canvas.astype(np.float32).copy()
 
     if isinstance(action, BrushAction):
-        _draw_stroke(
-            img_bgr,
-            action.trajectory,
-            _color_bgr(action.color_rgb),
-            max(1, 2 * action.stroke_size),
-        )
+        cov = _stroke_coverage_mask(h, w, action.trajectory, max(1, 2 * action.stroke_size))
+        return _blend_rgba_on_rgb01(base, cov, action.color_rgba)
 
-    elif isinstance(action, PencilAction):
-        _draw_stroke(img_bgr, action.trajectory, _color_bgr(action.color_rgb), thickness=1)
+    if isinstance(action, PencilAction):
+        cov = _stroke_coverage_mask(h, w, action.trajectory, thickness=1)
+        return _blend_rgba_on_rgb01(base, cov, action.color_rgba)
 
-    elif isinstance(action, EraserAction):
+    if isinstance(action, EraserAction):
+        img_bgr = _to_bgr_uint8(canvas)
         if original is None:
             logger.warning("Eraser called without original image; skipping")
             return canvas.copy()
@@ -202,15 +212,20 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
         if len(smooth) == 1:
             cv2.circle(mask, smooth[0], max(1, action.stroke_size), 255, -1)
         img_bgr[mask > 0] = orig_bgr[mask > 0]
+        return _from_bgr_uint8(img_bgr)
 
-    elif isinstance(action, FillAction):
+    if isinstance(action, FillAction):
+        img_bgr = _to_bgr_uint8(canvas)
         x, y = int(action.position[0]), int(action.position[1])
-        h, w = img_bgr.shape[:2]
-        x = max(0, min(x, w - 1))
-        y = max(0, min(y, h - 1))
-        img_bgr = _flood_fill(img_bgr, (x, y), _color_bgr(action.color_rgb))
+        hh, ww = img_bgr.shape[:2]
+        x = max(0, min(x, ww - 1))
+        y = max(0, min(y, hh - 1))
+        region = _flood_fill_region_mask(img_bgr, (x, y))
+        rgb_f = canvas.astype(np.float32).copy()
+        rgb_f = _blend_rgba_on_rgb01(rgb_f, region, action.color_rgba)
+        return rgb_f
 
-    return _from_bgr_uint8(img_bgr)
+    assert False, f"Unhandled action type {type(action)}"
 
 
 def execute_chunk(

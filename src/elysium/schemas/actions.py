@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 __all__ = [
     "BrushAction",
@@ -25,11 +25,11 @@ SYSTEM_PROMPT = (
     "Output format:\n"
     "{\"actions\":[{...},{...},{...},{...},{...}]}\n\n"
     "Available action types and their required fields:\n"
-    "- \"brush\": color_rgb ([R,G,B] ints 0-255), stroke_size (int 1-50), "
+    "- \"brush\": color_rgba ([R,G,B,A] ints 0-255), stroke_size (int 1-50), "
     "trajectory ([[x,y],...] pixel coords 0-256)\n"
-    "- \"pencil\": color_rgb ([R,G,B] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256)\n"
+    "- \"pencil\": color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256)\n"
     "- \"eraser\": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords 0-256)\n"
-    "- \"fill\": color_rgb ([R,G,B] ints 0-255), position ([x,y] pixel coords 0-256)\n"
+    "- \"fill\": color_rgba ([R,G,B,A] ints 0-255), position ([x,y] pixel coords 0-256)\n"
     "- \"color_adjust\": brightness (int -100 to 100), contrast (float 0.5-2.0), "
     "saturation (float 0.0-2.0), exposure (int -100 to 100, default 0), "
     "highlights (int -100 to 100, default 0), shadows (int -100 to 100, default 0), "
@@ -40,13 +40,23 @@ SYSTEM_PROMPT = (
 
 class BrushAction(BaseModel):
     action_type: Literal["brush"]
-    color_rgb: tuple[int, int, int]
+    color_rgba: tuple[int, int, int, int]
     stroke_size: int
     trajectory: list[tuple[int, int]]
 
-    @field_validator("color_rgb")
+    @model_validator(mode="before")
     @classmethod
-    def _validate_color(cls, v: tuple[int, int, int]) -> tuple[int, int, int]:
+    def _legacy_color_rgb(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
+            cr = data["color_rgb"]
+            if isinstance(cr, (list, tuple)) and len(cr) == 3:
+                data = {k: v for k, v in data.items() if k != "color_rgb"}
+                data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+        return data
+
+    @field_validator("color_rgba")
+    @classmethod
+    def _validate_color(cls, v: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
         assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
         return v
 
@@ -67,12 +77,22 @@ class BrushAction(BaseModel):
 
 class PencilAction(BaseModel):
     action_type: Literal["pencil"]
-    color_rgb: tuple[int, int, int]
+    color_rgba: tuple[int, int, int, int]
     trajectory: list[tuple[int, int]]
 
-    @field_validator("color_rgb")
+    @model_validator(mode="before")
     @classmethod
-    def _validate_color(cls, v: tuple[int, int, int]) -> tuple[int, int, int]:
+    def _legacy_color_rgb(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
+            cr = data["color_rgb"]
+            if isinstance(cr, (list, tuple)) and len(cr) == 3:
+                data = {k: v for k, v in data.items() if k != "color_rgb"}
+                data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+        return data
+
+    @field_validator("color_rgba")
+    @classmethod
+    def _validate_color(cls, v: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
         assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
         return v
 
@@ -97,12 +117,22 @@ class EraserAction(BaseModel):
 
 class FillAction(BaseModel):
     action_type: Literal["fill"]
-    color_rgb: tuple[int, int, int]
+    color_rgba: tuple[int, int, int, int]
     position: tuple[int, int]
 
-    @field_validator("color_rgb")
+    @model_validator(mode="before")
     @classmethod
-    def _validate_color(cls, v: tuple[int, int, int]) -> tuple[int, int, int]:
+    def _legacy_color_rgb(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
+            cr = data["color_rgb"]
+            if isinstance(cr, (list, tuple)) and len(cr) == 3:
+                data = {k: v for k, v in data.items() if k != "color_rgb"}
+                data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+        return data
+
+    @field_validator("color_rgba")
+    @classmethod
+    def _validate_color(cls, v: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
         assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
         return v
 

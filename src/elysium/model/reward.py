@@ -34,7 +34,7 @@ from elysium.schemas.actions import (
 __all__ = ["compute_reward", "action_reward", "visual_reward"]
 
 _CANVAS_SIZE = 256
-_COLOR_MAX = math.sqrt(3 * 255**2)
+_COLOR_MAX = math.sqrt(4 * 255**2)
 _TRAJ_MAX = math.sqrt(2 * _CANVAS_SIZE**2)
 _SIZE_MAX = 50.0
 
@@ -67,8 +67,7 @@ def _trajectory_distance(a: list[Any], b: list[Any]) -> float:
     return float(np.mean(dists) / _TRAJ_MAX)
 
 
-def _color_distance(c1: tuple[int, int, int], c2: tuple[int, int, int]) -> float:
-    """Normalised Euclidean RGB distance in [0, 1]."""
+def _color_distance(c1: tuple[int, ...], c2: tuple[int, ...]) -> float:
     diff = np.array(c1, dtype=float) - np.array(c2, dtype=float)
     return float(np.linalg.norm(diff) / _COLOR_MAX)
 
@@ -111,7 +110,7 @@ def _single_action_reward(pred: Action, gt: Action) -> float:
     if isinstance(pred, (BrushAction, PencilAction)) and isinstance(
         gt, (BrushAction, PencilAction)
     ):
-        penalty += _color_distance(pred.color_rgb, gt.color_rgb)
+        penalty += _color_distance(pred.color_rgba, gt.color_rgba)
         terms += 1
 
     if isinstance(pred, (BrushAction, EraserAction)) and isinstance(
@@ -121,7 +120,7 @@ def _single_action_reward(pred: Action, gt: Action) -> float:
         terms += 1
 
     if isinstance(pred, FillAction) and isinstance(gt, FillAction):
-        penalty += _color_distance(pred.color_rgb, gt.color_rgb)
+        penalty += _color_distance(pred.color_rgba, gt.color_rgba)
         penalty += _trajectory_distance([pred.position], [gt.position])
         terms += 2
 
