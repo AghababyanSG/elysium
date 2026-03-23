@@ -20,11 +20,14 @@ from elysium.schemas.actions import (
     Action,
     ActionChunk,
     BrushAction,
+    CloneStampAction,
     ColorAdjustAction,
     EraserAction,
     FillAction,
+    GaussianBlurAction,
     NoopAction,
     PencilAction,
+    TextOverlayAction,
     parse_action,
 )
 
@@ -297,6 +300,29 @@ def _brush_stroke_coverage_mask(
     return mask
 
 
+_HERSHEY_FONTS: dict[str, int] = {
+    "simplex": cv2.FONT_HERSHEY_SIMPLEX,
+    "duplex": cv2.FONT_HERSHEY_DUPLEX,
+    "complex": cv2.FONT_HERSHEY_COMPLEX,
+    "triplex": cv2.FONT_HERSHEY_TRIPLEX,
+    "script": cv2.FONT_HERSHEY_SCRIPT_SIMPLEX,
+}
+
+
+def _text_overlay_mask(
+    h: int,
+    w: int,
+    text: str,
+    position: tuple[int, int],
+    font: int,
+    font_size: float,
+    thickness: int,
+) -> np.ndarray:
+    blank = np.zeros((h, w), dtype=np.uint8)
+    cv2.putText(blank, text, position, font, font_size, 255, thickness, cv2.LINE_AA)
+    return blank.astype(np.float32) / 255.0
+
+
 def _flood_fill_region_mask(img_bgr: np.ndarray, position: tuple[int, int]) -> np.ndarray:
     h, w = img_bgr.shape[:2]
     flood_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
@@ -381,6 +407,36 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
         rgb_f = canvas.astype(np.float32).copy()
         rgb_f = _blend_rgba_on_rgb01(rgb_f, region, action.color_rgba)
         return rgb_f
+
+    if isinstance(action, TextOverlayAction):
+        font = _HERSHEY_FONTS[action.font_name]
+        mask = _text_overlay_mask(
+            h, w,
+            action.text,
+            (int(action.position[0]), int(action.position[1])),
+            font,
+            action.font_size,
+            action.thickness,
+        )
+        return _blend_rgba_on_rgb01(base, mask, action.color_rgba)
+
+    if isinstance(action, GaussianBlurAction):
+        k = 2 * action.radius + 1
+        img_uint8 = (canvas * 255.0).clip(0, 255).astype(np.uint8)
+        blurred = cv2.GaussianBlur(img_uint8, (k, k), 0)
+        return blurred.astype(np.float32) / 255.0
+
+    if isinstance(action, CloneStampAction):
+        sx, sy = int(action.source[0]), int(action.source[1])
+        dx, dy = int(action.destination[0]), int(action.destination[1])
+        r = action.size
+        src_patch = base.copy()
+        offset_x = dx - sx
+        offset_y = dy - sy
+        shifted = np.roll(np.roll(src_patch, offset_y, axis=0), offset_x, axis=1)
+        mask = brush_dab_mask(h, w, dx, dy, r, hardness=80)
+        a3 = mask[..., np.newaxis]
+        return np.clip(base * (1.0 - a3) + shifted * a3, 0.0, 1.0)
 
     assert False, f"Unhandled action type {type(action)}"
 

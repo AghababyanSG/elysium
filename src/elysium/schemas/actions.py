@@ -11,6 +11,9 @@ __all__ = [
     "EraserAction",
     "FillAction",
     "ColorAdjustAction",
+    "TextOverlayAction",
+    "GaussianBlurAction",
+    "CloneStampAction",
     "NoopAction",
     "Action",
     "ActionChunk",
@@ -35,7 +38,14 @@ SYSTEM_PROMPT = (
     "saturation (float 0.0-2.0), exposure (int -100 to 100, default 0), "
     "highlights (int -100 to 100, default 0), shadows (int -100 to 100, default 0), "
     "hue_shift (int -180 to 180, default 0), temperature (int -100 to 100, default 0)\n"
-    "- \"noop\": no additional fields — use when no more drawing is needed\n\n"
+    "- \"noop\": no additional fields — use when no more drawing is needed\n"
+    "- \"text_overlay\": text (str), position ([x,y] pixel coords 0-256), "
+    "font_name (str, one of: simplex, duplex, complex, triplex, script; default simplex), "
+    "font_size (float 0.2-5.0, default 1.0), color_rgba ([R,G,B,A] ints 0-255), "
+    "thickness (int 1-10, default 1)\n"
+    "- \"gaussian_blur\": radius (int 1-31, kernel = 2*radius+1; default 5)\n"
+    "- \"clone_stamp\": source ([x,y] pixel coords 0-256), destination ([x,y] pixel coords 0-256), "
+    "size (int 1-50 radius in pixels; default 10)\n\n"
     "Respond with valid JSON only."
 )
 
@@ -209,11 +219,96 @@ class ColorAdjustAction(BaseModel):
         return v
 
 
+_FONT_NAMES = {"simplex", "duplex", "complex", "triplex", "script"}
+
+
+class TextOverlayAction(BaseModel):
+    action_type: Literal["text_overlay"]
+    text: str
+    position: tuple[int, int]
+    font_name: str = "simplex"
+    font_size: float = 1.0
+    color_rgba: tuple[int, int, int, int]
+    thickness: int = 1
+
+    @field_validator("position")
+    @classmethod
+    def _validate_position(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x <= 256 and 0 <= y <= 256, f"Position ({x},{y}) out of canvas bounds"
+        return v
+
+    @field_validator("font_name")
+    @classmethod
+    def _validate_font_name(cls, v: str) -> str:
+        assert v in _FONT_NAMES, f"font_name must be one of {sorted(_FONT_NAMES)}"
+        return v
+
+    @field_validator("font_size")
+    @classmethod
+    def _validate_font_size(cls, v: float) -> float:
+        assert 0.2 <= v <= 5.0, "font_size must be in [0.2, 5.0]"
+        return v
+
+    @field_validator("color_rgba")
+    @classmethod
+    def _validate_color(cls, v: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
+        return v
+
+    @field_validator("thickness")
+    @classmethod
+    def _validate_thickness(cls, v: int) -> int:
+        assert 1 <= v <= 10, "thickness must be in [1, 10]"
+        return v
+
+
+class GaussianBlurAction(BaseModel):
+    action_type: Literal["gaussian_blur"]
+    radius: int = 5
+
+    @field_validator("radius")
+    @classmethod
+    def _validate_radius(cls, v: int) -> int:
+        assert 1 <= v <= 31, "radius must be in [1, 31]"
+        return v
+
+
+class CloneStampAction(BaseModel):
+    action_type: Literal["clone_stamp"]
+    source: tuple[int, int]
+    destination: tuple[int, int]
+    size: int = 10
+
+    @field_validator("source", "destination")
+    @classmethod
+    def _validate_coords(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x <= 256 and 0 <= y <= 256, f"Coordinate ({x},{y}) out of canvas bounds"
+        return v
+
+    @field_validator("size")
+    @classmethod
+    def _validate_size(cls, v: int) -> int:
+        assert 1 <= v <= 50, "size must be in [1, 50]"
+        return v
+
+
 class NoopAction(BaseModel):
     action_type: Literal["noop"]
 
 
-Action = BrushAction | PencilAction | EraserAction | FillAction | ColorAdjustAction | NoopAction
+Action = (
+    BrushAction
+    | PencilAction
+    | EraserAction
+    | FillAction
+    | ColorAdjustAction
+    | TextOverlayAction
+    | GaussianBlurAction
+    | CloneStampAction
+    | NoopAction
+)
 
 
 def parse_action(data: dict) -> Action:
@@ -225,6 +320,9 @@ def parse_action(data: dict) -> Action:
         "eraser": EraserAction,
         "fill": FillAction,
         "color_adjust": ColorAdjustAction,
+        "text_overlay": TextOverlayAction,
+        "gaussian_blur": GaussianBlurAction,
+        "clone_stamp": CloneStampAction,
         "noop": NoopAction,
     }
     if tool not in dispatch:

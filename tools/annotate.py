@@ -104,7 +104,20 @@ TOOL_ROWS: list[tuple[str, str, int, str]] = [
     ("fill", "Fill", pygame.K_f, "F"),
     ("picker", "Picker", pygame.K_i, "I"),
     ("color_adjust", "Adjust", pygame.K_a, "A"),
+    ("text_overlay", "Text", pygame.K_t, "T"),
+    ("gaussian_blur", "Blur", pygame.K_g, "G"),
+    ("clone_stamp", "Clone", pygame.K_l, "L"),
 ]
+
+_FONT_CYCLE = ["simplex", "duplex", "complex", "triplex", "script"]
+
+_HERSHEY_FONTS = {
+    "simplex": cv2.FONT_HERSHEY_SIMPLEX,
+    "duplex": cv2.FONT_HERSHEY_DUPLEX,
+    "complex": cv2.FONT_HERSHEY_COMPLEX,
+    "triplex": cv2.FONT_HERSHEY_TRIPLEX,
+    "script": cv2.FONT_HERSHEY_SCRIPT_SIMPLEX,
+}
 
 
 class ImageEditor:
@@ -174,6 +187,20 @@ class ImageEditor:
         self.redo_stack: list[np.ndarray] = []
         self._stroke_checkpoint_pending = False
 
+        self.blur_radius: int = 5
+        self.blur_brush_size: int = 20
+        self.clone_size: int = 10
+        self.text_font_size_int: int = 100
+        self.text_thickness: int = 1
+        self.text_font_name: str = "simplex"
+        self.overlay_text: str = "Text"
+        self.clone_source: tuple[int, int] | None = None
+        self._clone_stroke_offset: tuple[int, int] | None = None
+        self.text_overlay_editing: bool = False
+        self.text_input_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self.apply_blur_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self.font_cycle_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+
         self.clock = pygame.time.Clock()
         self.running = True
         self.discard_session = False
@@ -238,6 +265,16 @@ class ImageEditor:
                 return self.adj_hue_shift
             case "Temp":
                 return self.adj_temperature
+            case "BlurR":
+                return self.blur_radius
+            case "BrushSz":
+                return self.blur_brush_size
+            case "StmpSz":
+                return self.clone_size
+            case "TxtSz":
+                return self.text_font_size_int
+            case "Thick":
+                return self.text_thickness
             case _:
                 raise ValueError(label)
 
@@ -273,6 +310,16 @@ class ImageEditor:
                 self.adj_hue_shift = value
             case "Temp":
                 self.adj_temperature = value
+            case "BlurR":
+                self.blur_radius = value
+            case "BrushSz":
+                self.blur_brush_size = value
+            case "StmpSz":
+                self.clone_size = value
+            case "TxtSz":
+                self.text_font_size_int = value
+            case "Thick":
+                self.text_thickness = value
             case _:
                 raise ValueError(label)
 
@@ -422,6 +469,59 @@ class ImageEditor:
             m = brush_dab_mask(h, w, x, y, size, self.brush_hardness)
         _blend_bgr_mask_inplace(self.canvas_array, m, color[0], color[1], color[2], color[3])
         self.log_operation(self.tool, size, color, (x, y), (x, y), hardness=self.brush_hardness)
+        self.canvas_dirty = True
+
+    def gaussian_blur_dab(self, pos: tuple[int, int]) -> None:
+        cx, cy = pos
+        k = 2 * self.blur_radius + 1
+        h, w = self.canvas_array.shape[:2]
+        blurred = cv2.GaussianBlur(self.canvas_array, (k, k), 0)
+        mask = brush_dab_mask(h, w, cx, cy, self.blur_brush_size, hardness=60)
+        a3 = mask[..., np.newaxis]
+        canvas_f = self.canvas_array.astype(np.float32)
+        result = canvas_f * (1.0 - a3) + blurred.astype(np.float32) * a3
+        self.canvas_array = np.clip(result, 0, 255).astype(np.uint8)
+        self.log_operation("gaussian_blur", self.blur_radius, None, (cx, cy), (cx, cy))
+        self.canvas_dirty = True
+
+    def apply_text_overlay(self, pos: tuple[int, int]) -> None:
+        x, y = pos
+        font = _HERSHEY_FONTS[self.text_font_name]
+        font_scale = self.text_font_size_int / 100.0
+        r, g, b, a = self.color[0], self.color[1], self.color[2], self.color[3]
+        h, w = self.canvas_array.shape[:2]
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.putText(mask, self.overlay_text, (x, y), font, font_scale, 255, self.text_thickness, cv2.LINE_AA)
+        _blend_bgr_mask_inplace(self.canvas_array, mask.astype(np.float32) / 255.0, r, g, b, a)
+        self.log_operation(
+            "text_overlay",
+            None,
+            tuple(self.color),
+            (x, y),
+            (x, y),
+            text=self.overlay_text,
+            font_name=self.text_font_name,
+            font_size=font_scale,
+            thickness=self.text_thickness,
+        )
+        self.canvas_dirty = True
+
+    def clone_stamp_paint(self, dest: tuple[int, int]) -> None:
+        if self.clone_source is None:
+            return
+        sx, sy = self.clone_source
+        dx, dy = dest
+        if self._clone_stroke_offset is None:
+            self._clone_stroke_offset = (dx - sx, dy - sy)
+        offset_x, offset_y = self._clone_stroke_offset
+        h, w = self.canvas_array.shape[:2]
+        canvas_f = self.canvas_array.astype(np.float32)
+        shifted = np.roll(np.roll(canvas_f, offset_y, axis=0), offset_x, axis=1)
+        mask = brush_dab_mask(h, w, dx, dy, self.clone_size, hardness=80)
+        a3 = mask[..., np.newaxis]
+        self.canvas_array = np.clip(canvas_f * (1.0 - a3) + shifted * a3, 0, 255).astype(np.uint8)
+        actual_src = (dx - offset_x, dy - offset_y)
+        self.log_operation("clone_stamp", self.clone_size, None, actual_src, (dx, dy))
         self.canvas_dirty = True
 
     def _reset_color_adjust(self) -> None:
@@ -603,7 +703,7 @@ class ImageEditor:
         y += sw + ly.pad + 4
 
         self.sliders.clear()
-        if self.tool in ("brush", "pencil", "fill"):
+        if self.tool in ("brush", "pencil", "fill", "text_overlay"):
             for cfg in (
                 {"label": "R", "color": (200, 60, 60), "min": 0, "max": 255},
                 {"label": "G", "color": (60, 200, 60), "min": 0, "max": 255},
@@ -642,6 +742,61 @@ class ImageEditor:
                 100,
             )
             y += 42
+
+        if self.tool == "text_overlay":
+            self.sliders["TxtSz"] = self.draw_slider(
+                ui_x + ly.pad, y, ly.slider_w, "TxtSz", (180, 180, 100), 20, 500
+            )
+            y += 42
+            self.sliders["Thick"] = self.draw_slider(
+                ui_x + ly.pad, y, ly.slider_w, "Thick", (120, 120, 120), 1, 10
+            )
+            y += 42
+            font_lbl = self.font_sm.render("Font:", True, t.text)
+            self.screen.blit(font_lbl, (ui_x + ly.pad, y))
+            self.font_cycle_rect = pygame.Rect(
+                ui_x + ly.pad + 36, y - 2, ly.sidebar_w - 2 * ly.pad - 40, 22
+            )
+            pygame.draw.rect(self.screen, t.btn_hover, self.font_cycle_rect, border_radius=4)
+            fn_surf = self.font_sm.render(self.text_font_name, True, t.text)
+            self.screen.blit(fn_surf, (self.font_cycle_rect.x + 4, self.font_cycle_rect.y + 3))
+            y += 28
+            txt_lbl = self.font_sm.render("Text:", True, t.text)
+            self.screen.blit(txt_lbl, (ui_x + ly.pad, y))
+            y += 18
+            self.text_input_rect = pygame.Rect(
+                ui_x + ly.pad, y, ly.sidebar_w - 2 * ly.pad, 24
+            )
+            border_c = t.accent if self.text_overlay_editing else t.input_border
+            pygame.draw.rect(self.screen, t.input_bg, self.text_input_rect)
+            pygame.draw.rect(self.screen, border_c, self.text_input_rect, 1)
+            txt_surf = self.font_sm.render(self.overlay_text, True, t.text)
+            self.screen.blit(txt_surf, (self.text_input_rect.x + 4, self.text_input_rect.y + 4))
+            y += 30
+
+        if self.tool == "gaussian_blur":
+            self.sliders["BlurR"] = self.draw_slider(
+                ui_x + ly.pad, y, ly.slider_w, "BlurR", (100, 160, 200), 1, 31
+            )
+            y += 42
+            self.sliders["BrushSz"] = self.draw_slider(
+                ui_x + ly.pad, y, ly.slider_w, "BrushSz", (120, 120, 120), 1, 100
+            )
+            y += 42
+
+        if self.tool == "clone_stamp":
+            self.sliders["StmpSz"] = self.draw_slider(
+                ui_x + ly.pad, y, ly.slider_w, "StmpSz", (120, 180, 120), 1, 50
+            )
+            y += 42
+            src_txt = (
+                f"Src: {self.clone_source[0]},{self.clone_source[1]}"
+                if self.clone_source
+                else "Alt+click: set source"
+            )
+            src_surf = self.font_sm.render(src_txt, True, t.text_muted)
+            self.screen.blit(src_surf, (ui_x + ly.pad, y))
+            y += 20
 
         if self.tool == "color_adjust":
             for cfg in (
@@ -746,11 +901,23 @@ class ImageEditor:
             if rect.collidepoint(x, y):
                 if self.tool == "color_adjust" and tid != "color_adjust":
                     self._reset_color_adjust()
+                if self.tool == "text_overlay" and tid != "text_overlay":
+                    self.text_overlay_editing = False
                 self.tool = tid
                 self.active_input = None
                 self.input_text = ""
                 self._input_range = None
                 return True
+
+        if self.tool == "text_overlay" and self.font_cycle_rect.collidepoint(x, y):
+            idx = (_FONT_CYCLE.index(self.text_font_name) + 1) % len(_FONT_CYCLE)
+            self.text_font_name = _FONT_CYCLE[idx]
+            return True
+
+        if self.tool == "text_overlay" and self.text_input_rect.collidepoint(x, y):
+            self.text_overlay_editing = True
+            self.active_input = None
+            return True
 
         if self.tool == "color_adjust" and self.apply_adjust_rect.collidepoint(x, y):
             self.apply_color_adjustment()
@@ -800,6 +967,11 @@ class ImageEditor:
         canvas_pos = (cx, cy)
 
         if event_type == "down":
+            if self.tool == "clone_stamp" and pygame.key.get_mods() & pygame.KMOD_ALT:
+                self.clone_source = canvas_pos
+                self._clone_stroke_offset = None
+                return
+
             if pygame.key.get_mods() & pygame.KMOD_ALT:
                 self._sample_color_at(cx, cy)
                 return
@@ -822,14 +994,26 @@ class ImageEditor:
                 self._stroke_checkpoint_pending = False
             elif self.tool == "eraser":
                 self.erase_to_original(canvas_pos, canvas_pos)
+            elif self.tool == "gaussian_blur":
+                self.gaussian_blur_dab(canvas_pos)
+            elif self.tool == "text_overlay":
+                self.apply_text_overlay(canvas_pos)
+                self.drawing = False
+                self._stroke_checkpoint_pending = False
+            elif self.tool == "clone_stamp":
+                self.clone_stamp_paint(canvas_pos)
             else:
                 size = 1 if self.tool == "pencil" else self.brush_size
                 self.draw_circle(canvas_pos, size, tuple(self.color))
 
         elif event_type == "motion" and self.drawing:
-            if self.prev_pos and self.tool != "picker":
+            if self.prev_pos and self.tool not in ("picker", "fill", "text_overlay"):
                 if self.tool == "eraser":
                     self.erase_to_original(self.prev_pos, canvas_pos)
+                elif self.tool == "clone_stamp":
+                    self.clone_stamp_paint(canvas_pos)
+                elif self.tool == "gaussian_blur":
+                    self.gaussian_blur_dab(canvas_pos)
                 else:
                     size = 1 if self.tool == "pencil" else self.brush_size
                     self.draw_line(
@@ -839,12 +1023,13 @@ class ImageEditor:
                         tuple(self.color),
                         pencil=self.tool == "pencil",
                     )
-            self.prev_pos = canvas_pos if self.tool != "picker" else None
+            self.prev_pos = canvas_pos if self.tool not in ("picker", "fill", "text_overlay") else None
 
         elif event_type == "up":
             self.drawing = False
             self.prev_pos = None
             self._stroke_checkpoint_pending = False
+            self._clone_stroke_offset = None
 
     def draw_canvas_overlay(self, mouse_xy: tuple[int, int]) -> None:
         x, y = mouse_xy
@@ -854,11 +1039,27 @@ class ImageEditor:
         canvas_h = self.window_height - self.layout.status_h
         if x >= min(zoomed_size, canvas_w) or y >= min(zoomed_size, canvas_h):
             return
-        if self.tool in ("fill", "picker"):
+        if self.tool in ("fill", "picker", "text_overlay"):
             pygame.draw.line(self.screen, (255, 255, 255), (x - 10, y), (x + 10, y), 1)
             pygame.draw.line(self.screen, (255, 255, 255), (x, y - 10), (x, y + 10), 1)
             return
         if self.tool == "color_adjust":
+            return
+        if self.tool == "gaussian_blur":
+            r = max(1, int(self.blur_brush_size * zoom))
+            s = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(s, (100, 160, 255, 100), (r + 2, r + 2), r, 1)
+            self.screen.blit(s, (x - r - 2, y - r - 2))
+            return
+        if self.tool == "clone_stamp":
+            r = max(1, int(self.clone_size * zoom))
+            s = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(s, (100, 220, 255, 100), (r + 2, r + 2), r, 1)
+            self.screen.blit(s, (x - r - 2, y - r - 2))
+            if self.clone_source is not None:
+                sx = int(self.clone_source[0] * zoom)
+                sy = int(self.clone_source[1] * zoom)
+                pygame.draw.circle(self.screen, (100, 220, 255), (sx, sy), max(1, int(self.clone_size * zoom)), 1)
             return
         r = max(1, int((self.brush_size if self.tool != "pencil" else 1) * zoom))
         s = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
@@ -877,8 +1078,9 @@ class ImageEditor:
 
     def run(self) -> None:
         print("\n=== Elysium Annotator ===")
-        print("- Tools: brush, pencil, eraser, fill, picker, color adjust")
-        print("- Shortcuts: B P E F I A; Ctrl+Z undo; Ctrl+Shift+Z redo")
+        print("- Tools: brush, pencil, eraser, fill, picker, color adjust, text, blur, clone")
+        print("- Shortcuts: B P E F I A T G L; Ctrl+Z undo; Ctrl+Shift+Z redo")
+        print("- Clone stamp: Alt+click to set source, then drag to paint")
         print("- Alt+click: sample color")
         print("- c: reset canvas; q / Esc: quit")
         print(f"- Auto-save ~{self.fps}/s on change -> {self.output_dir}/\n")
@@ -905,6 +1107,14 @@ class ImageEditor:
                         self.handle_canvas_mouse(event.pos, "up")
 
                 elif event.type == pygame.KEYDOWN:
+                    if self.text_overlay_editing:
+                        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
+                            self.text_overlay_editing = False
+                        elif event.key == pygame.K_BACKSPACE:
+                            self.overlay_text = self.overlay_text[:-1]
+                        elif event.unicode and len(self.overlay_text) < 80:
+                            self.overlay_text += event.unicode
+                        continue
                     if self.active_input:
                         if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                             self.apply_input()
