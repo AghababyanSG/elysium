@@ -15,7 +15,7 @@ _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from elysium.engine.canvas import apply_color_adjust_rgb01, brush_dab_mask, brush_segment_mask
+from elysium.engine.canvas import apply_color_adjust_rgb01, brush_dab_mask, brush_segment_mask, draw_shape_mask
 
 
 def _blend_bgr_mask_inplace(
@@ -119,6 +119,9 @@ _HERSHEY_FONTS = {
     "script": cv2.FONT_HERSHEY_SCRIPT_SIMPLEX,
 }
 
+_STAMP_SHAPES = ["circle", "leaf", "star", "triangle", "dash"]
+_BRUSH_MODES = [("regular", "Regular"), ("scatter", "Scatter"), ("pattern", "Pattern")]
+
 
 class ImageEditor:
     def __init__(self, image_path: str) -> None:
@@ -201,6 +204,31 @@ class ImageEditor:
         self.apply_blur_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
         self.font_cycle_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
 
+        self.brush_mode: str = "regular"
+        self.brush_dropdown_open: bool = False
+        self._brush_btn_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self.brush_dropdown_rects: list[tuple[pygame.Rect, str]] = []
+
+        self.scatter_shape: str = "circle"
+        self.scatter_size: int = 8
+        self.scatter_density: int = 5
+        self.scatter_amount: int = 30
+        self.scatter_size_jitter: int = 50
+        self.scatter_angle_jitter: int = 0
+
+        self.pattern_shape: str = "leaf"
+        self.pattern_size: int = 10
+        self.pattern_spacing: int = 20
+        self.pattern_angle_jitter: int = 15
+
+        self.scatter_shape_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+        self.pattern_shape_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
+
+        self._stroke_trajectory: list[tuple[int, int]] = []
+        self._stamp_rng: np.random.Generator = np.random.default_rng(0)
+        self._stroke_seed: int = 0
+        self._pattern_dist_acc: float = 0.0
+
         self.clock = pygame.time.Clock()
         self.running = True
         self.discard_session = False
@@ -275,6 +303,22 @@ class ImageEditor:
                 return self.text_font_size_int
             case "Thick":
                 return self.text_thickness
+            case "ScatSz":
+                return self.scatter_size
+            case "ScatD":
+                return self.scatter_density
+            case "ScatAmt":
+                return self.scatter_amount
+            case "ScatSzJ":
+                return self.scatter_size_jitter
+            case "ScatAngJ":
+                return self.scatter_angle_jitter
+            case "PatSz":
+                return self.pattern_size
+            case "PatSpc":
+                return self.pattern_spacing
+            case "PatAngJ":
+                return self.pattern_angle_jitter
             case _:
                 raise ValueError(label)
 
@@ -320,6 +364,22 @@ class ImageEditor:
                 self.text_font_size_int = value
             case "Thick":
                 self.text_thickness = value
+            case "ScatSz":
+                self.scatter_size = value
+            case "ScatD":
+                self.scatter_density = value
+            case "ScatAmt":
+                self.scatter_amount = value
+            case "ScatSzJ":
+                self.scatter_size_jitter = value
+            case "ScatAngJ":
+                self.scatter_angle_jitter = value
+            case "PatSz":
+                self.pattern_size = value
+            case "PatSpc":
+                self.pattern_spacing = value
+            case "PatAngJ":
+                self.pattern_angle_jitter = value
             case _:
                 raise ValueError(label)
 
@@ -524,6 +584,102 @@ class ImageEditor:
         self.log_operation("clone_stamp", self.clone_size, None, actual_src, (dx, dy))
         self.canvas_dirty = True
 
+    def _scatter_brush_dab(self, pos: tuple[int, int], prev: tuple[int, int] | None = None) -> None:
+        cx, cy = pos
+        h, w = self.canvas_array.shape[:2]
+        base = 0.0
+        if prev is not None:
+            sdx = float(cx - prev[0])
+            sdy = float(cy - prev[1])
+            if sdx * sdx + sdy * sdy >= 1e-6:
+                base = float(np.degrees(np.arctan2(sdy, sdx)))
+        for _ in range(max(1, self.scatter_density)):
+            if self.scatter_shape == "dash":
+                if self.scatter_angle_jitter <= 0:
+                    angle = base
+                else:
+                    angle = base + float(
+                        self._stamp_rng.uniform(
+                            -float(self.scatter_angle_jitter), float(self.scatter_angle_jitter)
+                        )
+                    )
+            else:
+                cap = max(1.0, min(360.0, float(self.scatter_angle_jitter)))
+                if self.scatter_angle_jitter <= 0:
+                    angle = float(self._stamp_rng.uniform(0.0, 360.0))
+                else:
+                    angle = float(self._stamp_rng.uniform(0.0, cap))
+            scatter_r = self.scatter_amount / 100.0 * self.scatter_size * 2.5
+            dx = float(self._stamp_rng.uniform(-scatter_r, scatter_r))
+            dy = float(self._stamp_rng.uniform(-scatter_r, scatter_r))
+            scale = 1.0 + float(
+                self._stamp_rng.uniform(-self.scatter_size_jitter / 100.0, self.scatter_size_jitter / 100.0)
+            )
+            stamp_size = max(1, int(self.scatter_size * scale))
+            stamp_cx = int(max(0, min(w - 1, cx + dx)))
+            stamp_cy = int(max(0, min(h - 1, cy + dy)))
+            mask = draw_shape_mask(h, w, stamp_cx, stamp_cy, stamp_size, angle, self.scatter_shape)
+            _blend_bgr_mask_inplace(self.canvas_array, mask, self.color[0], self.color[1], self.color[2], self.color[3])
+        self.canvas_dirty = True
+
+    def _pattern_brush_dab(self, pos: tuple[int, int]) -> None:
+        cx, cy = pos
+        h, w = self.canvas_array.shape[:2]
+        mask = draw_shape_mask(h, w, cx, cy, self.pattern_size, 0.0, self.pattern_shape)
+        _blend_bgr_mask_inplace(self.canvas_array, mask, self.color[0], self.color[1], self.color[2], self.color[3])
+        self.canvas_dirty = True
+
+    def _pattern_brush_step(self, prev: tuple[int, int], cur: tuple[int, int]) -> None:
+        x1, y1 = prev
+        x2, y2 = cur
+        seg_len = float(np.hypot(x2 - x1, y2 - y1))
+        if seg_len < 1e-6:
+            return
+        dir_angle = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+        h, w = self.canvas_array.shape[:2]
+        self._pattern_dist_acc += seg_len
+        while self._pattern_dist_acc >= self.pattern_spacing:
+            t = max(0.0, min(1.0, 1.0 - (self._pattern_dist_acc - self.pattern_spacing) / seg_len))
+            sx = int(x1 + (x2 - x1) * t)
+            sy = int(y1 + (y2 - y1) * t)
+            jitter = float(self._stamp_rng.uniform(-self.pattern_angle_jitter, self.pattern_angle_jitter))
+            mask = draw_shape_mask(h, w, sx, sy, self.pattern_size, dir_angle + jitter, self.pattern_shape)
+            _blend_bgr_mask_inplace(self.canvas_array, mask, self.color[0], self.color[1], self.color[2], self.color[3])
+            self._pattern_dist_acc -= self.pattern_spacing
+        self.canvas_dirty = True
+
+    def _log_stamp_stroke(self) -> None:
+        traj = self._stroke_trajectory
+        if not traj:
+            return
+        if self.brush_mode == "scatter":
+            self.log_operation(
+                "scatter_brush",
+                self.scatter_size,
+                tuple(self.color),
+                traj[0],
+                traj[-1],
+                shape=self.scatter_shape,
+                trajectory=[list(p) for p in traj],
+                density=self.scatter_density,
+                scatter=self.scatter_amount,
+                size_jitter=self.scatter_size_jitter,
+                angle_jitter=self.scatter_angle_jitter,
+                seed=self._stroke_seed,
+            )
+        else:
+            self.log_operation(
+                "pattern_brush",
+                self.pattern_size,
+                tuple(self.color),
+                traj[0],
+                traj[-1],
+                shape=self.pattern_shape,
+                trajectory=[list(p) for p in traj],
+                spacing=self.pattern_spacing,
+                angle_jitter=self.pattern_angle_jitter,
+            )
+
     def _reset_color_adjust(self) -> None:
         self.adj_brightness = 0
         self.adj_exposure = 0
@@ -671,6 +827,8 @@ class ImageEditor:
         for tid, label, _key, letter in TOOL_ROWS:
             rect = pygame.Rect(ui_x + ly.pad, y, ly.sidebar_w - 2 * ly.pad, ly.btn_h)
             self.tool_button_rects.append((rect, tid))
+            if tid == "brush":
+                self._brush_btn_rect = rect.copy()
             hover = rect.collidepoint(mx, my)
             active = tid == self.tool
             if active:
@@ -680,9 +838,30 @@ class ImageEditor:
             else:
                 bg = t.btn_idle
             pygame.draw.rect(self.screen, bg, rect, border_radius=6)
-            lbl = self.font_sm.render(f"[{letter}] {label}", True, t.text if not active else (255, 255, 255))
+            if tid == "brush" and self.brush_mode != "regular":
+                lbl_text = f"[{letter}] {label} ({self.brush_mode[:4]}) ▾"
+            elif tid == "brush":
+                lbl_text = f"[{letter}] {label} ▾"
+            else:
+                lbl_text = f"[{letter}] {label}"
+            lbl = self.font_sm.render(lbl_text, True, t.text if not active else (255, 255, 255))
             self.screen.blit(lbl, (rect.x + 8, rect.y + 7))
             y += ly.btn_h + ly.btn_gap
+
+        if self.brush_dropdown_open:
+            self.brush_dropdown_rects = []
+            drop_y = self._brush_btn_rect.bottom + 2
+            for mode, mode_label in _BRUSH_MODES:
+                r = pygame.Rect(self._brush_btn_rect.x + 4, drop_y, self._brush_btn_rect.width - 4, ly.btn_h)
+                self.brush_dropdown_rects.append((r, mode))
+                is_active = mode == self.brush_mode
+                drop_hover = r.collidepoint(mx, my)
+                drop_bg = t.btn_active if is_active else (t.btn_hover if drop_hover else t.input_bg)
+                pygame.draw.rect(self.screen, drop_bg, r, border_radius=4)
+                pygame.draw.rect(self.screen, t.accent if is_active else t.sidebar_border, r, 1, border_radius=4)
+                mode_surf = self.font_sm.render(f"  {mode_label}", True, (255, 255, 255) if is_active else t.text)
+                self.screen.blit(mode_surf, (r.x + 4, r.y + 7))
+                drop_y += ly.btn_h + 2
 
         y += ly.pad
         title = self.font_md.render("COLOR", True, t.text)
@@ -720,28 +899,54 @@ class ImageEditor:
                     cfg["max"],
                 )
                 y += 42
-        if self.tool in ("brush", "eraser"):
+        if self.tool == "eraser" or (self.tool == "brush" and self.brush_mode == "regular"):
             self.sliders["Size"] = self.draw_slider(
-                ui_x + ly.pad,
-                y,
-                ly.slider_w,
-                "Size",
-                (120, 120, 120),
-                1,
-                50,
+                ui_x + ly.pad, y, ly.slider_w, "Size", (120, 120, 120), 1, 50,
             )
             y += 42
-        if self.tool == "brush":
+        if self.tool == "brush" and self.brush_mode == "regular":
             self.sliders["Hard"] = self.draw_slider(
-                ui_x + ly.pad,
-                y,
-                ly.slider_w,
-                "Hard",
-                (150, 130, 90),
-                0,
-                100,
+                ui_x + ly.pad, y, ly.slider_w, "Hard", (150, 130, 90), 0, 100,
             )
             y += 42
+
+        if self.tool == "brush" and self.brush_mode == "scatter":
+            shape_lbl = self.font_sm.render("Shape:", True, t.text)
+            self.screen.blit(shape_lbl, (ui_x + ly.pad, y))
+            self.scatter_shape_rect = pygame.Rect(ui_x + ly.pad + 44, y - 2, ly.sidebar_w - 2 * ly.pad - 48, 22)
+            pygame.draw.rect(self.screen, t.btn_hover, self.scatter_shape_rect, border_radius=4)
+            sh_surf = self.font_sm.render(self.scatter_shape, True, t.text)
+            self.screen.blit(sh_surf, (self.scatter_shape_rect.x + 4, self.scatter_shape_rect.y + 3))
+            y += 28
+            for cfg in (
+                {"label": "ScatSz",  "color": (120, 120, 120), "min": 1,   "max": 50},
+                {"label": "ScatD",   "color": (120, 180, 120), "min": 1,   "max": 20},
+                {"label": "ScatAmt", "color": (180, 120, 120), "min": 0,   "max": 100},
+                {"label": "ScatSzJ", "color": (180, 180, 80),  "min": 0,   "max": 100},
+                {"label": "ScatAngJ","color": (120, 120, 200), "min": 0,   "max": 360},
+            ):
+                self.sliders[cfg["label"]] = self.draw_slider(
+                    ui_x + ly.pad, y, ly.slider_w, cfg["label"], cfg["color"], cfg["min"], cfg["max"]
+                )
+                y += 42
+
+        if self.tool == "brush" and self.brush_mode == "pattern":
+            shape_lbl = self.font_sm.render("Shape:", True, t.text)
+            self.screen.blit(shape_lbl, (ui_x + ly.pad, y))
+            self.pattern_shape_rect = pygame.Rect(ui_x + ly.pad + 44, y - 2, ly.sidebar_w - 2 * ly.pad - 48, 22)
+            pygame.draw.rect(self.screen, t.btn_hover, self.pattern_shape_rect, border_radius=4)
+            sh_surf = self.font_sm.render(self.pattern_shape, True, t.text)
+            self.screen.blit(sh_surf, (self.pattern_shape_rect.x + 4, self.pattern_shape_rect.y + 3))
+            y += 28
+            for cfg in (
+                {"label": "PatSz",  "color": (120, 120, 120), "min": 1,  "max": 50},
+                {"label": "PatSpc", "color": (180, 140, 80),  "min": 5,  "max": 100},
+                {"label": "PatAngJ","color": (120, 120, 200), "min": 0,  "max": 90},
+            ):
+                self.sliders[cfg["label"]] = self.draw_slider(
+                    ui_x + ly.pad, y, ly.slider_w, cfg["label"], cfg["color"], cfg["min"], cfg["max"]
+                )
+                y += 42
 
         if self.tool == "text_overlay":
             self.sliders["TxtSz"] = self.draw_slider(
@@ -824,7 +1029,7 @@ class ImageEditor:
         self.screen.blit(view_title, (ui_x + ly.pad, y))
         y += 26
         self.sliders["Zoom"] = self.draw_slider(
-            ui_x + ly.pad, y, ly.slider_w, "Zoom", (120, 180, 120), 50, 400
+            ui_x + ly.pad, y, ly.slider_w, "Zoom", (120, 180, 120), 50, 600
         )
         y += 42
 
@@ -897,13 +1102,35 @@ class ImageEditor:
             self.running = False
             return True
 
+        if self.brush_dropdown_open:
+            for r, mode in self.brush_dropdown_rects:
+                if r.collidepoint(x, y):
+                    self.brush_mode = mode
+                    self.brush_dropdown_open = False
+                    return True
+            self.brush_dropdown_open = False
+
+        if self.tool == "brush" and self.brush_mode == "scatter" and self.scatter_shape_rect.collidepoint(x, y):
+            idx = (_STAMP_SHAPES.index(self.scatter_shape) + 1) % len(_STAMP_SHAPES)
+            self.scatter_shape = _STAMP_SHAPES[idx]
+            return True
+
+        if self.tool == "brush" and self.brush_mode == "pattern" and self.pattern_shape_rect.collidepoint(x, y):
+            idx = (_STAMP_SHAPES.index(self.pattern_shape) + 1) % len(_STAMP_SHAPES)
+            self.pattern_shape = _STAMP_SHAPES[idx]
+            return True
+
         for rect, tid in self.tool_button_rects:
             if rect.collidepoint(x, y):
                 if self.tool == "color_adjust" and tid != "color_adjust":
                     self._reset_color_adjust()
                 if self.tool == "text_overlay" and tid != "text_overlay":
                     self.text_overlay_editing = False
-                self.tool = tid
+                if tid == "brush" and self.tool == "brush":
+                    self.brush_dropdown_open = not self.brush_dropdown_open
+                else:
+                    self.brush_dropdown_open = False
+                    self.tool = tid
                 self.active_input = None
                 self.input_text = ""
                 self._input_range = None
@@ -952,6 +1179,8 @@ class ImageEditor:
             self.color = [int(r), int(g), int(b), 255]
 
     def handle_canvas_mouse(self, pos: tuple[int, int], event_type: str) -> None:
+        if event_type == "down":
+            self.brush_dropdown_open = False
         zoom = self.zoom_pct / 100.0
         zoomed_size = int(self.canvas_size * zoom)
         canvas_w = self.window_width - self.layout.sidebar_w
@@ -1002,6 +1231,16 @@ class ImageEditor:
                 self._stroke_checkpoint_pending = False
             elif self.tool == "clone_stamp":
                 self.clone_stamp_paint(canvas_pos)
+            elif self.tool == "brush" and self.brush_mode == "scatter":
+                self._stroke_seed = int(np.random.randint(0, 2**31))
+                self._stamp_rng = np.random.default_rng(self._stroke_seed)
+                self._stroke_trajectory = [canvas_pos]
+                self._scatter_brush_dab(canvas_pos, None)
+            elif self.tool == "brush" and self.brush_mode == "pattern":
+                self._stamp_rng = np.random.default_rng(0)
+                self._stroke_trajectory = [canvas_pos]
+                self._pattern_dist_acc = 0.0
+                self._pattern_brush_dab(canvas_pos)
             else:
                 size = 1 if self.tool == "pencil" else self.brush_size
                 self.draw_circle(canvas_pos, size, tuple(self.color))
@@ -1014,6 +1253,12 @@ class ImageEditor:
                     self.clone_stamp_paint(canvas_pos)
                 elif self.tool == "gaussian_blur":
                     self.gaussian_blur_dab(canvas_pos)
+                elif self.tool == "brush" and self.brush_mode == "scatter":
+                    self._stroke_trajectory.append(canvas_pos)
+                    self._scatter_brush_dab(canvas_pos, self.prev_pos)
+                elif self.tool == "brush" and self.brush_mode == "pattern":
+                    self._stroke_trajectory.append(canvas_pos)
+                    self._pattern_brush_step(self.prev_pos, canvas_pos)
                 else:
                     size = 1 if self.tool == "pencil" else self.brush_size
                     self.draw_line(
@@ -1026,6 +1271,9 @@ class ImageEditor:
             self.prev_pos = canvas_pos if self.tool not in ("picker", "fill", "text_overlay") else None
 
         elif event_type == "up":
+            if self.tool == "brush" and self.brush_mode != "regular" and self._stroke_trajectory:
+                self._log_stamp_stroke()
+                self._stroke_trajectory = []
             self.drawing = False
             self.prev_pos = None
             self._stroke_checkpoint_pending = False
@@ -1061,7 +1309,15 @@ class ImageEditor:
                 sy = int(self.clone_source[1] * zoom)
                 pygame.draw.circle(self.screen, (100, 220, 255), (sx, sy), max(1, int(self.clone_size * zoom)), 1)
             return
-        r = max(1, int((self.brush_size if self.tool != "pencil" else 1) * zoom))
+        if self.tool == "brush" and self.brush_mode == "scatter":
+            cursor_size = self.scatter_size
+        elif self.tool == "brush" and self.brush_mode == "pattern":
+            cursor_size = self.pattern_size
+        elif self.tool == "pencil":
+            cursor_size = 1
+        else:
+            cursor_size = self.brush_size
+        r = max(1, int(cursor_size * zoom))
         s = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
         pygame.draw.circle(s, (255, 255, 255, 70), (r + 2, r + 2), r, 1)
         self.screen.blit(s, (x - r - 2, y - r - 2))

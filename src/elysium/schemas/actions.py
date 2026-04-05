@@ -14,11 +14,15 @@ __all__ = [
     "TextOverlayAction",
     "GaussianBlurAction",
     "CloneStampAction",
+    "ScatterBrushAction",
+    "PatternBrushAction",
     "NoopAction",
     "Action",
     "ActionChunk",
     "SYSTEM_PROMPT",
 ]
+
+_STAMP_SHAPES = {"circle", "leaf", "star", "triangle", "dash"}
 
 SYSTEM_PROMPT = (
     "You are a canvas drawing assistant. "
@@ -45,7 +49,18 @@ SYSTEM_PROMPT = (
     "thickness (int 1-10, default 1)\n"
     "- \"gaussian_blur\": radius (int 1-31, kernel = 2*radius+1; default 5)\n"
     "- \"clone_stamp\": source ([x,y] pixel coords 0-256), destination ([x,y] pixel coords 0-256), "
-    "size (int 1-50 radius in pixels; default 10)\n\n"
+    "size (int 1-50 radius in pixels; default 10)\n"
+    "- \"scatter_brush\": shape (str, one of: circle, leaf, star, triangle, dash; default circle), "
+    "color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256), "
+    "size (int 1-50 base stamp size; default 8), density (int 1-20 stamps per step; default 5), "
+    "scatter (int 0-100 scatter distance percent; default 30), "
+    "size_jitter (int 0-100 size variation percent; default 50), "
+    "angle_jitter (int 0-360: for shape dash, max degrees added to stroke tangent; 0 = follow stroke; "
+    "for other shapes, max rotation in [0,angle_jitter] or full 360 if 0; default 0), seed (int; default 0)\n"
+    "- \"pattern_brush\": shape (str, one of: circle, leaf, star, triangle, dash; default leaf), "
+    "color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256), "
+    "size (int 1-50 stamp size; default 10), spacing (int 5-100 pixels between stamps; default 20), "
+    "angle_jitter (int 0-90 rotation variation per stamp; default 15)\n\n"
     "Respond with valid JSON only."
 )
 
@@ -294,6 +309,113 @@ class CloneStampAction(BaseModel):
         return v
 
 
+class ScatterBrushAction(BaseModel):
+    action_type: Literal["scatter_brush"]
+    shape: str = "circle"
+    color_rgba: tuple[int, int, int, int]
+    trajectory: list[tuple[int, int]]
+    size: int = 8
+    density: int = 5
+    scatter: int = 30
+    size_jitter: int = 50
+    angle_jitter: int = 0
+    seed: int = 0
+
+    @field_validator("shape")
+    @classmethod
+    def _validate_shape(cls, v: str) -> str:
+        assert v in _STAMP_SHAPES, f"shape must be one of {sorted(_STAMP_SHAPES)}"
+        return v
+
+    @field_validator("color_rgba")
+    @classmethod
+    def _validate_color(cls, v: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
+        return v
+
+    @field_validator("trajectory")
+    @classmethod
+    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        assert len(v) >= 1, "Trajectory must have at least one point"
+        return v
+
+    @field_validator("size")
+    @classmethod
+    def _validate_size(cls, v: int) -> int:
+        assert 1 <= v <= 50
+        return v
+
+    @field_validator("density")
+    @classmethod
+    def _validate_density(cls, v: int) -> int:
+        assert 1 <= v <= 20
+        return v
+
+    @field_validator("scatter")
+    @classmethod
+    def _validate_scatter(cls, v: int) -> int:
+        assert 0 <= v <= 100
+        return v
+
+    @field_validator("size_jitter")
+    @classmethod
+    def _validate_size_jitter(cls, v: int) -> int:
+        assert 0 <= v <= 100
+        return v
+
+    @field_validator("angle_jitter")
+    @classmethod
+    def _validate_angle_jitter(cls, v: int) -> int:
+        assert 0 <= v <= 360
+        return v
+
+
+class PatternBrushAction(BaseModel):
+    action_type: Literal["pattern_brush"]
+    shape: str = "leaf"
+    color_rgba: tuple[int, int, int, int]
+    trajectory: list[tuple[int, int]]
+    size: int = 10
+    spacing: int = 20
+    angle_jitter: int = 15
+
+    @field_validator("shape")
+    @classmethod
+    def _validate_shape(cls, v: str) -> str:
+        assert v in _STAMP_SHAPES, f"shape must be one of {sorted(_STAMP_SHAPES)}"
+        return v
+
+    @field_validator("color_rgba")
+    @classmethod
+    def _validate_color(cls, v: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
+        return v
+
+    @field_validator("trajectory")
+    @classmethod
+    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        assert len(v) >= 1, "Trajectory must have at least one point"
+        return v
+
+    @field_validator("size")
+    @classmethod
+    def _validate_size(cls, v: int) -> int:
+        assert 1 <= v <= 50
+        return v
+
+    @field_validator("spacing")
+    @classmethod
+    def _validate_spacing(cls, v: int) -> int:
+        assert 5 <= v <= 100
+        return v
+
+    @field_validator("angle_jitter")
+    @classmethod
+    def _validate_angle_jitter(cls, v: int) -> int:
+        assert 0 <= v <= 90
+        return v
+
+
 class NoopAction(BaseModel):
     action_type: Literal["noop"]
 
@@ -307,6 +429,8 @@ Action = (
     | TextOverlayAction
     | GaussianBlurAction
     | CloneStampAction
+    | ScatterBrushAction
+    | PatternBrushAction
     | NoopAction
 )
 
@@ -323,6 +447,8 @@ def parse_action(data: dict) -> Action:
         "text_overlay": TextOverlayAction,
         "gaussian_blur": GaussianBlurAction,
         "clone_stamp": CloneStampAction,
+        "scatter_brush": ScatterBrushAction,
+        "pattern_brush": PatternBrushAction,
         "noop": NoopAction,
     }
     if tool not in dispatch:

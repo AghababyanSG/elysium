@@ -26,7 +26,9 @@ from elysium.schemas.actions import (
     FillAction,
     GaussianBlurAction,
     NoopAction,
+    PatternBrushAction,
     PencilAction,
+    ScatterBrushAction,
     TextOverlayAction,
     parse_action,
 )
@@ -37,6 +39,7 @@ __all__ = [
     "apply_color_adjust_rgb01",
     "brush_segment_mask",
     "brush_dab_mask",
+    "draw_shape_mask",
 ]
 
 _BEZIER_STEPS = 40
@@ -323,6 +326,127 @@ def _text_overlay_mask(
     return blank.astype(np.float32) / 255.0
 
 
+def _polygon_points(cx: int, cy: int, r: int, n: int, angle_deg: float) -> np.ndarray:
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False) + np.radians(angle_deg)
+    return np.array(
+        [[int(cx + r * np.cos(a)), int(cy + r * np.sin(a))] for a in angles],
+        dtype=np.int32,
+    )
+
+
+def _star_points(cx: int, cy: int, r_outer: int, r_inner: int, n: int, angle_deg: float) -> np.ndarray:
+    pts = []
+    for i in range(2 * n):
+        r = r_outer if i % 2 == 0 else r_inner
+        a = i * np.pi / n + np.radians(angle_deg)
+        pts.append([int(cx + r * np.cos(a)), int(cy + r * np.sin(a))])
+    return np.array(pts, dtype=np.int32)
+
+
+def draw_shape_mask(h: int, w: int, cx: int, cy: int, size: int, angle_deg: float, shape: str) -> np.ndarray:
+    """Return a float32 [0,1] mask with the given shape stamped at (cx, cy).
+
+    Args:
+        h, w: Canvas dimensions.
+        cx, cy: Center of the stamp in pixel coords.
+        size: Radius / half-size of the shape in pixels.
+        angle_deg: Rotation of the shape in degrees.
+        shape: One of "circle", "leaf", "star", "triangle", "dash".
+
+    Returns:
+        float32 mask of shape (h, w), values in [0, 1].
+    """
+    tmp = np.zeros((h, w), dtype=np.uint8)
+    s = max(1, size)
+    if shape == "circle":
+        cv2.circle(tmp, (cx, cy), s, 255, -1, cv2.LINE_AA)
+    elif shape == "leaf":
+        cv2.ellipse(tmp, (cx, cy), (s, max(1, s // 3)), angle_deg, 0, 360, 255, -1, cv2.LINE_AA)
+    elif shape == "triangle":
+        cv2.fillPoly(tmp, [_polygon_points(cx, cy, s, 3, angle_deg)], 255)
+    elif shape == "star":
+        cv2.fillPoly(tmp, [_star_points(cx, cy, s, max(1, s // 2), 5, angle_deg)], 255)
+    elif shape == "dash":
+        rad = np.radians(angle_deg)
+        x1, y1 = int(cx + np.cos(rad) * s), int(cy + np.sin(rad) * s)
+        x2, y2 = int(cx - np.cos(rad) * s), int(cy - np.sin(rad) * s)
+        cv2.line(tmp, (x1, y1), (x2, y2), 255, 1, cv2.LINE_AA)
+    return tmp.astype(np.float32) / 255.0
+
+
+def _scatter_tangent_deg_along_path(path_pts: list[tuple[int, int]], i: int) -> float:
+    if len(path_pts) < 2:
+        return 0.0
+    if i < len(path_pts) - 1:
+        x, y = path_pts[i]
+        x2, y2 = path_pts[i + 1]
+        return float(np.degrees(np.arctan2(y2 - y, x2 - x)))
+    x0, y0 = path_pts[i - 1]
+    x, y = path_pts[i]
+    return float(np.degrees(np.arctan2(y - y0, x - x0)))
+
+
+def _execute_scatter_brush(canvas: np.ndarray, action: ScatterBrushAction) -> np.ndarray:
+    h, w = canvas.shape[:2]
+    coverage = np.zeros((h, w), dtype=np.float32)
+    rng = np.random.default_rng(action.seed)
+    pts = _bezier_points([(p[0], p[1]) for p in action.trajectory])
+    sample_step = max(1, _BEZIER_STEPS // 10)
+    sampled = pts[::sample_step]
+    for si, (x, y) in enumerate(sampled):
+        base_tangent = _scatter_tangent_deg_along_path(sampled, si)
+        for _ in range(max(1, action.density)):
+            if action.shape == "dash":
+                base = base_tangent
+                if action.angle_jitter <= 0:
+                    angle = base
+                else:
+                    angle = base + float(rng.uniform(-float(action.angle_jitter), float(action.angle_jitter)))
+            else:
+                cap = max(1.0, min(360.0, float(action.angle_jitter)))
+                if action.angle_jitter <= 0:
+                    angle = float(rng.uniform(0.0, 360.0))
+                else:
+                    angle = float(rng.uniform(0.0, cap))
+            scatter_r = action.scatter / 100.0 * action.size * 2.5
+            dx = float(rng.uniform(-scatter_r, scatter_r))
+            dy = float(rng.uniform(-scatter_r, scatter_r))
+            scale = 1.0 + float(rng.uniform(-action.size_jitter / 100.0, action.size_jitter / 100.0))
+            stamp_size = max(1, int(action.size * scale))
+            stamp_cx = int(max(0, min(w - 1, x + dx)))
+            stamp_cy = int(max(0, min(h - 1, y + dy)))
+            stamp = draw_shape_mask(h, w, stamp_cx, stamp_cy, stamp_size, angle, action.shape)
+            _composite_brush_coverage(coverage, stamp)
+    return _blend_rgba_on_rgb01(canvas.astype(np.float32).copy(), coverage, action.color_rgba)
+
+
+def _execute_pattern_brush(canvas: np.ndarray, action: PatternBrushAction) -> np.ndarray:
+    h, w = canvas.shape[:2]
+    coverage = np.zeros((h, w), dtype=np.float32)
+    rng = np.random.default_rng(0)
+    pts = _bezier_points([(p[0], p[1]) for p in action.trajectory])
+    stamp = draw_shape_mask(h, w, pts[0][0], pts[0][1], action.size, 0.0, action.shape)
+    _composite_brush_coverage(coverage, stamp)
+    dist_acc = 0.0
+    dir_angle = 0.0
+    for i in range(1, len(pts)):
+        x1, y1 = pts[i - 1]
+        x2, y2 = pts[i]
+        seg_len = float(np.hypot(x2 - x1, y2 - y1))
+        if seg_len > 0:
+            dir_angle = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+        dist_acc += seg_len
+        while dist_acc >= action.spacing:
+            t = max(0.0, min(1.0, 1.0 - (dist_acc - action.spacing) / seg_len)) if seg_len > 0 else 0.0
+            sx = int(x1 + (x2 - x1) * t)
+            sy = int(y1 + (y2 - y1) * t)
+            jitter = float(rng.uniform(-action.angle_jitter, action.angle_jitter))
+            stamp = draw_shape_mask(h, w, sx, sy, action.size, dir_angle + jitter, action.shape)
+            _composite_brush_coverage(coverage, stamp)
+            dist_acc -= action.spacing
+    return _blend_rgba_on_rgb01(canvas.astype(np.float32).copy(), coverage, action.color_rgba)
+
+
 def _flood_fill_region_mask(img_bgr: np.ndarray, position: tuple[int, int]) -> np.ndarray:
     h, w = img_bgr.shape[:2]
     flood_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
@@ -437,6 +561,12 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
         mask = brush_dab_mask(h, w, dx, dy, r, hardness=80)
         a3 = mask[..., np.newaxis]
         return np.clip(base * (1.0 - a3) + shifted * a3, 0.0, 1.0)
+
+    if isinstance(action, ScatterBrushAction):
+        return _execute_scatter_brush(canvas, action)
+
+    if isinstance(action, PatternBrushAction):
+        return _execute_pattern_brush(canvas, action)
 
     assert False, f"Unhandled action type {type(action)}"
 

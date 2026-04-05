@@ -37,7 +37,7 @@ python -c "import torch; print(torch.cuda.is_available(), torch.version.cuda)"
 
 ```bash
 pip install "unsloth[cu124-torch240] @ git+https://github.com/unslothai/unsloth.git"
-pip install trl datasets peft bitsandbytes transformers accelerate pyyaml rdp opencv-python Pillow
+pip install trl datasets peft bitsandbytes transformers accelerate pyyaml rdp opencv-python Pillow pygame
 pip install -e .
 ```
 
@@ -52,6 +52,8 @@ Run the annotation tool for each new training session:
 ```bash
 python tools/annotate.py data/raw/images/pirlo.jpg
 ```
+
+More detail on the Pygame UI (shortcuts, tools) is in [`tools/README.md`](tools/README.md). The annotator and action schema evolve; if something is missing there, check `tools/annotate.py` and `src/elysium/schemas/actions.py`.
 
 Each session saves:
 - Canvas frames → `data/raw/frames/`
@@ -83,6 +85,8 @@ tasks:
 python scripts/prepare_data.py
 ```
 
+Optional flags: `--config <path>` (default `configs/train.yaml`), `--epsilon <float>` (RDP override), `--instructions <path>` (override `configs/instructions.yaml`).
+
 This runs the full data pipeline:
 1. Trajectory compression (RDP) → `data/interim/compressed/`
 2. Action chunking (horizon=5, sliding window) → `data/interim/chunks/`
@@ -90,12 +94,12 @@ This runs the full data pipeline:
 
 ### Step 4 — Download model and train
 
-The model (`Qwen2.5-VL-3B-Instruct`) is downloaded automatically from HuggingFace on the first run (~6GB, cached to `~/.cache/huggingface/`).
+The model name is set in `configs/train.yaml` under `model.name` (currently `unsloth/Qwen3.5-4B`). It is downloaded automatically from HuggingFace on the first run (cached under `~/.cache/huggingface/`).
 
-To pre-download manually:
+To pre-download manually (Hugging Face Hub CLI):
 
 ```bash
-huggingface-cli download unsloth/Qwen2.5-VL-3B-Instruct
+hf download unsloth/Qwen3.5-4B
 ```
 
 Launch training:
@@ -106,9 +110,9 @@ python scripts/train.py
 
 | Metric | Expected value |
 |--------|---------------|
-| VRAM usage | ~6.5–7.5 GB |
-| Speed | ~2–4 steps/min |
-| Time (3 epochs, 50 samples) | ~10–20 min |
+| VRAM usage | Depends on model and `max_seq_length`; reduce if OOM |
+| Speed | Depends on GPU; order of minutes per epoch for small runs |
+| Time (3 epochs, 50 samples) | ~10–20 min (typical laptop GPU; varies) |
 
 Checkpoints are saved to `models/checkpoints/`. The final model is at `models/checkpoints/final/`.
 
@@ -129,6 +133,7 @@ Options:
 --checkpoint  Path to model checkpoint (default: models/checkpoints/final)
 --output      Path to save result image (default: outputs/<stem>_result.jpg)
 --config      Path to config file      (default: configs/train.yaml)
+--preview     Open a live preview window; close it to stop inference early
 ```
 
 ---
@@ -140,7 +145,7 @@ Options:
 python3 -m venv .venv && source .venv/bin/activate
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 pip install "unsloth[cu124-torch240] @ git+https://github.com/unslothai/unsloth.git"
-pip install trl datasets peft bitsandbytes transformers accelerate pyyaml rdp opencv-python Pillow
+pip install trl datasets peft bitsandbytes transformers accelerate pyyaml rdp opencv-python Pillow pygame
 pip install -e .
 
 # Every training cycle
@@ -175,7 +180,8 @@ elysium/
 ├── scripts/
 │   ├── prepare_data.py     # Run full data pipeline
 │   ├── train.py            # Launch training
-│   └── infer.py            # Run inference
+│   ├── infer.py            # Run inference
+│   └── rescale_images.py   # Batch image rescale utility
 ├── src/elysium/            # Python package
 │   ├── data/               #   compress, chunk, format
 │   ├── engine/             #   Deterministic canvas executor

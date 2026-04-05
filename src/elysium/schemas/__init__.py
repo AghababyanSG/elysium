@@ -8,7 +8,9 @@ from elysium.schemas.actions import (
     FillAction,
     GaussianBlurAction,
     NoopAction,
+    PatternBrushAction,
     PencilAction,
+    ScatterBrushAction,
     TextOverlayAction,
     parse_action,
 )
@@ -24,6 +26,8 @@ __all__ = [
     "TextOverlayAction",
     "GaussianBlurAction",
     "CloneStampAction",
+    "ScatterBrushAction",
+    "PatternBrushAction",
     "NoopAction",
     "parse_action",
 ]
