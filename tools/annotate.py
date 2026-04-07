@@ -16,6 +16,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from elysium.engine.canvas import apply_color_adjust_rgb01, brush_dab_mask, brush_segment_mask, draw_shape_mask
+from elysium.schemas.actions import CANVAS_SIZE
 
 
 def _blend_bgr_mask_inplace(
@@ -127,8 +128,8 @@ class ImageEditor:
     def __init__(self, image_path: str) -> None:
         pygame.init()
 
-        self.canvas_size = 256
-        self.zoom_pct: int = 200
+        self.canvas_size = CANVAS_SIZE
+        self.zoom_pct: int = 100
         self.layout = LAYOUT
         self.theme = THEME
 
@@ -215,11 +216,16 @@ class ImageEditor:
         self.scatter_amount: int = 30
         self.scatter_size_jitter: int = 50
         self.scatter_angle_jitter: int = 0
+        self.scatter_thickness: int = 1
+        self.scatter_length: int = 0
+        self.scatter_base_angle: int = -1
 
         self.pattern_shape: str = "leaf"
         self.pattern_size: int = 10
         self.pattern_spacing: int = 20
         self.pattern_angle_jitter: int = 15
+        self.pattern_thickness: int = 1
+        self.pattern_length: int = 0
 
         self.scatter_shape_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
         self.pattern_shape_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
@@ -313,12 +319,22 @@ class ImageEditor:
                 return self.scatter_size_jitter
             case "ScatAngJ":
                 return self.scatter_angle_jitter
+            case "ScatThk":
+                return self.scatter_thickness
+            case "ScatLen":
+                return self.scatter_length
+            case "ScatBA":
+                return self.scatter_base_angle
             case "PatSz":
                 return self.pattern_size
             case "PatSpc":
                 return self.pattern_spacing
             case "PatAngJ":
                 return self.pattern_angle_jitter
+            case "PatThk":
+                return self.pattern_thickness
+            case "PatLen":
+                return self.pattern_length
             case _:
                 raise ValueError(label)
 
@@ -374,12 +390,22 @@ class ImageEditor:
                 self.scatter_size_jitter = value
             case "ScatAngJ":
                 self.scatter_angle_jitter = value
+            case "ScatThk":
+                self.scatter_thickness = value
+            case "ScatLen":
+                self.scatter_length = value
+            case "ScatBA":
+                self.scatter_base_angle = value
             case "PatSz":
                 self.pattern_size = value
             case "PatSpc":
                 self.pattern_spacing = value
             case "PatAngJ":
                 self.pattern_angle_jitter = value
+            case "PatThk":
+                self.pattern_thickness = value
+            case "PatLen":
+                self.pattern_length = value
             case _:
                 raise ValueError(label)
 
@@ -595,10 +621,11 @@ class ImageEditor:
                 base = float(np.degrees(np.arctan2(sdy, sdx)))
         for _ in range(max(1, self.scatter_density)):
             if self.scatter_shape == "dash":
+                tangent = float(self.scatter_base_angle) if self.scatter_base_angle >= 0 else base
                 if self.scatter_angle_jitter <= 0:
-                    angle = base
+                    angle = tangent
                 else:
-                    angle = base + float(
+                    angle = tangent + float(
                         self._stamp_rng.uniform(
                             -float(self.scatter_angle_jitter), float(self.scatter_angle_jitter)
                         )
@@ -618,14 +645,34 @@ class ImageEditor:
             stamp_size = max(1, int(self.scatter_size * scale))
             stamp_cx = int(max(0, min(w - 1, cx + dx)))
             stamp_cy = int(max(0, min(h - 1, cy + dy)))
-            mask = draw_shape_mask(h, w, stamp_cx, stamp_cy, stamp_size, angle, self.scatter_shape)
+            mask = draw_shape_mask(
+                h,
+                w,
+                stamp_cx,
+                stamp_cy,
+                stamp_size,
+                angle,
+                self.scatter_shape,
+                thickness=self.scatter_thickness,
+                length=self.scatter_length,
+            )
             _blend_bgr_mask_inplace(self.canvas_array, mask, self.color[0], self.color[1], self.color[2], self.color[3])
         self.canvas_dirty = True
 
     def _pattern_brush_dab(self, pos: tuple[int, int]) -> None:
         cx, cy = pos
         h, w = self.canvas_array.shape[:2]
-        mask = draw_shape_mask(h, w, cx, cy, self.pattern_size, 0.0, self.pattern_shape)
+        mask = draw_shape_mask(
+            h,
+            w,
+            cx,
+            cy,
+            self.pattern_size,
+            0.0,
+            self.pattern_shape,
+            thickness=self.pattern_thickness,
+            length=self.pattern_length,
+        )
         _blend_bgr_mask_inplace(self.canvas_array, mask, self.color[0], self.color[1], self.color[2], self.color[3])
         self.canvas_dirty = True
 
@@ -643,7 +690,17 @@ class ImageEditor:
             sx = int(x1 + (x2 - x1) * t)
             sy = int(y1 + (y2 - y1) * t)
             jitter = float(self._stamp_rng.uniform(-self.pattern_angle_jitter, self.pattern_angle_jitter))
-            mask = draw_shape_mask(h, w, sx, sy, self.pattern_size, dir_angle + jitter, self.pattern_shape)
+            mask = draw_shape_mask(
+                h,
+                w,
+                sx,
+                sy,
+                self.pattern_size,
+                dir_angle + jitter,
+                self.pattern_shape,
+                thickness=self.pattern_thickness,
+                length=self.pattern_length,
+            )
             _blend_bgr_mask_inplace(self.canvas_array, mask, self.color[0], self.color[1], self.color[2], self.color[3])
             self._pattern_dist_acc -= self.pattern_spacing
         self.canvas_dirty = True
@@ -666,6 +723,9 @@ class ImageEditor:
                 size_jitter=self.scatter_size_jitter,
                 angle_jitter=self.scatter_angle_jitter,
                 seed=self._stroke_seed,
+                thickness=self.scatter_thickness,
+                length=self.scatter_length,
+                base_angle=self.scatter_base_angle,
             )
         else:
             self.log_operation(
@@ -678,6 +738,8 @@ class ImageEditor:
                 trajectory=[list(p) for p in traj],
                 spacing=self.pattern_spacing,
                 angle_jitter=self.pattern_angle_jitter,
+                thickness=self.pattern_thickness,
+                length=self.pattern_length,
             )
 
     def _reset_color_adjust(self) -> None:
@@ -924,6 +986,9 @@ class ImageEditor:
                 {"label": "ScatAmt", "color": (180, 120, 120), "min": 0,   "max": 100},
                 {"label": "ScatSzJ", "color": (180, 180, 80),  "min": 0,   "max": 100},
                 {"label": "ScatAngJ","color": (120, 120, 200), "min": 0,   "max": 360},
+                {"label": "ScatThk", "color": (100, 100, 100), "min": 1,   "max": 10},
+                {"label": "ScatLen", "color": (140, 100, 140), "min": 0,   "max": 100},
+                {"label": "ScatBA",  "color": (90, 140, 160),  "min": -1,  "max": 360},
             ):
                 self.sliders[cfg["label"]] = self.draw_slider(
                     ui_x + ly.pad, y, ly.slider_w, cfg["label"], cfg["color"], cfg["min"], cfg["max"]
@@ -942,6 +1007,8 @@ class ImageEditor:
                 {"label": "PatSz",  "color": (120, 120, 120), "min": 1,  "max": 50},
                 {"label": "PatSpc", "color": (180, 140, 80),  "min": 5,  "max": 100},
                 {"label": "PatAngJ","color": (120, 120, 200), "min": 0,  "max": 90},
+                {"label": "PatThk", "color": (100, 100, 100), "min": 1,  "max": 10},
+                {"label": "PatLen", "color": (140, 100, 140), "min": 0,  "max": 100},
             ):
                 self.sliders[cfg["label"]] = self.draw_slider(
                     ui_x + ly.pad, y, ly.slider_w, cfg["label"], cfg["color"], cfg["min"], cfg["max"]

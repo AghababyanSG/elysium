@@ -343,7 +343,18 @@ def _star_points(cx: int, cy: int, r_outer: int, r_inner: int, n: int, angle_deg
     return np.array(pts, dtype=np.int32)
 
 
-def draw_shape_mask(h: int, w: int, cx: int, cy: int, size: int, angle_deg: float, shape: str) -> np.ndarray:
+def draw_shape_mask(
+    h: int,
+    w: int,
+    cx: int,
+    cy: int,
+    size: int,
+    angle_deg: float,
+    shape: str,
+    *,
+    thickness: int = 1,
+    length: int = 0,
+) -> np.ndarray:
     """Return a float32 [0,1] mask with the given shape stamped at (cx, cy).
 
     Args:
@@ -367,10 +378,11 @@ def draw_shape_mask(h: int, w: int, cx: int, cy: int, size: int, angle_deg: floa
     elif shape == "star":
         cv2.fillPoly(tmp, [_star_points(cx, cy, s, max(1, s // 2), 5, angle_deg)], 255)
     elif shape == "dash":
+        half = max(1, length) if length > 0 else s
         rad = np.radians(angle_deg)
-        x1, y1 = int(cx + np.cos(rad) * s), int(cy + np.sin(rad) * s)
-        x2, y2 = int(cx - np.cos(rad) * s), int(cy - np.sin(rad) * s)
-        cv2.line(tmp, (x1, y1), (x2, y2), 255, 1, cv2.LINE_AA)
+        x1, y1 = int(cx + np.cos(rad) * half), int(cy + np.sin(rad) * half)
+        x2, y2 = int(cx - np.cos(rad) * half), int(cy - np.sin(rad) * half)
+        cv2.line(tmp, (x1, y1), (x2, y2), 255, max(1, thickness), cv2.LINE_AA)
     return tmp.astype(np.float32) / 255.0
 
 
@@ -397,7 +409,7 @@ def _execute_scatter_brush(canvas: np.ndarray, action: ScatterBrushAction) -> np
         base_tangent = _scatter_tangent_deg_along_path(sampled, si)
         for _ in range(max(1, action.density)):
             if action.shape == "dash":
-                base = base_tangent
+                base = float(action.base_angle) if action.base_angle >= 0 else base_tangent
                 if action.angle_jitter <= 0:
                     angle = base
                 else:
@@ -415,7 +427,17 @@ def _execute_scatter_brush(canvas: np.ndarray, action: ScatterBrushAction) -> np
             stamp_size = max(1, int(action.size * scale))
             stamp_cx = int(max(0, min(w - 1, x + dx)))
             stamp_cy = int(max(0, min(h - 1, y + dy)))
-            stamp = draw_shape_mask(h, w, stamp_cx, stamp_cy, stamp_size, angle, action.shape)
+            stamp = draw_shape_mask(
+                h,
+                w,
+                stamp_cx,
+                stamp_cy,
+                stamp_size,
+                angle,
+                action.shape,
+                thickness=action.thickness,
+                length=action.length,
+            )
             _composite_brush_coverage(coverage, stamp)
     return _blend_rgba_on_rgb01(canvas.astype(np.float32).copy(), coverage, action.color_rgba)
 
@@ -425,7 +447,17 @@ def _execute_pattern_brush(canvas: np.ndarray, action: PatternBrushAction) -> np
     coverage = np.zeros((h, w), dtype=np.float32)
     rng = np.random.default_rng(0)
     pts = _bezier_points([(p[0], p[1]) for p in action.trajectory])
-    stamp = draw_shape_mask(h, w, pts[0][0], pts[0][1], action.size, 0.0, action.shape)
+    stamp = draw_shape_mask(
+        h,
+        w,
+        pts[0][0],
+        pts[0][1],
+        action.size,
+        0.0,
+        action.shape,
+        thickness=action.thickness,
+        length=action.length,
+    )
     _composite_brush_coverage(coverage, stamp)
     dist_acc = 0.0
     dir_angle = 0.0
@@ -441,7 +473,17 @@ def _execute_pattern_brush(canvas: np.ndarray, action: PatternBrushAction) -> np
             sx = int(x1 + (x2 - x1) * t)
             sy = int(y1 + (y2 - y1) * t)
             jitter = float(rng.uniform(-action.angle_jitter, action.angle_jitter))
-            stamp = draw_shape_mask(h, w, sx, sy, action.size, dir_angle + jitter, action.shape)
+            stamp = draw_shape_mask(
+                h,
+                w,
+                sx,
+                sy,
+                action.size,
+                dir_angle + jitter,
+                action.shape,
+                thickness=action.thickness,
+                length=action.length,
+            )
             _composite_brush_coverage(coverage, stamp)
             dist_acc -= action.spacing
     return _blend_rgba_on_rgb01(canvas.astype(np.float32).copy(), coverage, action.color_rgba)

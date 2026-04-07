@@ -10,7 +10,7 @@ From the repository root (with `src` on `PYTHONPATH`, e.g. `pip install -e .`):
 python tools/annotate.py <image_path>
 ```
 
-Images are resized to 256×256 on load.
+Images are resized to 512×512 on load.
 
 ## Tools
 
@@ -59,7 +59,7 @@ Images are resized to 256×256 on load.
 
 ## Utilities
 
-**to_jpg.py** — convert to RGB JPEG and resize to 256×256:
+**to_jpg.py** — convert to RGB JPEG and resize to 512×512:
 
 ```bash
 python tools/to_jpg.py <input> <output.jpg>

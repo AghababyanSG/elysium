@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from elysium.schemas.actions import (
+    CANVAS_SIZE,
     Action,
     ActionChunk,
     BrushAction,
@@ -33,9 +34,8 @@ from elysium.schemas.actions import (
 
 __all__ = ["compute_reward", "action_reward", "visual_reward"]
 
-_CANVAS_SIZE = 256
 _COLOR_MAX = math.sqrt(4 * 255**2)
-_TRAJ_MAX = math.sqrt(2 * _CANVAS_SIZE**2)
+_TRAJ_MAX = math.sqrt(2 * CANVAS_SIZE**2)
 _SIZE_MAX = 50.0
 
 

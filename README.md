@@ -8,7 +8,7 @@ This project is in early development. The current focus is collecting training d
 
 ## Data Annotation Tool
 
-A Pygame-based editor for painting on images and capturing edit operations. Images are resized to 256×256 for annotation.
+A Pygame-based editor for painting on images and capturing edit operations. Images are resized to 512×512 for annotation.
 
 ### Tools
 
@@ -53,7 +53,7 @@ opencv-python
 
 ## Utilities
 
-**to_jpg.py** — Convert and resize images to 256×256 JPEG:
+**to_jpg.py** — Convert and resize images to 512×512 JPEG:
 
 ```bash
 python data_annotation/to_jpg.py <input_image> <output_image.jpg>

@@ -1,4 +1,5 @@
 from elysium.schemas.actions import (
+    CANVAS_SIZE,
     Action,
     ActionChunk,
     BrushAction,
@@ -16,6 +17,7 @@ from elysium.schemas.actions import (
 )
 
 __all__ = [
+    "CANVAS_SIZE",
     "Action",
     "ActionChunk",
     "BrushAction",

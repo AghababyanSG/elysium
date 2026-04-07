@@ -16,7 +16,7 @@ This separation between prediction and execution is fundamental. The model's job
 
 ## Data Collection
 
-Training data comes from a Pygame-based annotation tool where users paint on 256×256 images. The tool supports four instruments: brush (configurable size and color), pencil (1px strokes), eraser (restores original pixels), and flood fill. Every mouse event is logged at ~30fps as a raw operation record containing timestamp, frame ID, tool type, size, color, and start/end positions. Canvas snapshots are saved as JPEG frames whenever the canvas changes.
+Training data comes from a Pygame-based annotation tool where users paint on 512×512 images. The tool supports four instruments: brush (configurable size and color), pencil (1px strokes), eraser (restores original pixels), and flood fill. Every mouse event is logged at ~30fps as a raw operation record containing timestamp, frame ID, tool type, size, color, and start/end positions. Canvas snapshots are saved as JPEG frames whenever the canvas changes.
 
 A single annotation session produces two artifacts: a directory of canvas frame images and a JSON log of hundreds of raw operations. These form the supervised training signal — the frames are observations, and the operations are the actions the model must learn to predict.
 

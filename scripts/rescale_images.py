@@ -1,4 +1,4 @@
-"""Rescale images to 256x256.
+"""Rescale images to CANVAS_SIZE x CANVAS_SIZE (see elysium.schemas.actions).
 
 Usage:
     python scripts/rescale_images.py <input_path> [--output <output_path>]
@@ -15,10 +15,15 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
+_SRC = ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from elysium.schemas.actions import CANVAS_SIZE
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Rescale images to 256x256")
+    parser = argparse.ArgumentParser(description=f"Rescale images to {CANVAS_SIZE}x{CANVAS_SIZE}")
     parser.add_argument("input", type=Path, help="Input image or directory of images")
     parser.add_argument(
         "--output",
@@ -44,7 +49,9 @@ def parse_args() -> argparse.Namespace:
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
-def rescale_image(src: Path, dst: Path, size: tuple[int, int] = (256, 256)) -> None:
+def rescale_image(src: Path, dst: Path, size: tuple[int, int] | None = None) -> None:
+    if size is None:
+        size = (CANVAS_SIZE, CANVAS_SIZE)
     img = Image.open(src).convert("RGB")
     img = img.resize(size, Image.Resampling.LANCZOS)
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -58,7 +65,7 @@ def main() -> None:
         print(f"Error: not found: {args.input}", file=sys.stderr)
         sys.exit(1)
 
-    size = (256, 256)
+    size = (CANVAS_SIZE, CANVAS_SIZE)
 
     if args.input.is_file():
         out = args.output

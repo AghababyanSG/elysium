@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, field_validator, model_validator
 
 __all__ = [
+    "CANVAS_SIZE",
     "BrushAction",
     "PencilAction",
     "EraserAction",
@@ -22,45 +23,51 @@ __all__ = [
     "SYSTEM_PROMPT",
 ]
 
+CANVAS_SIZE = 512
+
 _STAMP_SHAPES = {"circle", "leaf", "star", "triangle", "dash"}
 
+_SYSTEM_PROMPT_COORD = f"0-{CANVAS_SIZE}"
 SYSTEM_PROMPT = (
     "You are a canvas drawing assistant. "
     "Given an image of a canvas and a user instruction, respond with ONLY a JSON object "
     "specifying exactly 5 sequential drawing actions to apply to the canvas. "
     "Do not explain, describe, or add any text outside the JSON.\n\n"
     "Output format:\n"
-    "{\"actions\":[{...},{...},{...},{...},{...}]}\n\n"
+    '{"actions":[{...},{...},{...},{...},{...}]}\n\n'
     "Available action types and their required fields:\n"
-    "- \"brush\": color_rgba ([R,G,B,A] ints 0-255), stroke_size (int 1-50), "
+    '- "brush": color_rgba ([R,G,B,A] ints 0-255), stroke_size (int 1-50), '
     "hardness (int 0-100, 0 = invisible, 100 = hard edge like a stamp), "
-    "trajectory ([[x,y],...] pixel coords 0-256)\n"
-    "- \"pencil\": color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256)\n"
-    "- \"eraser\": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords 0-256)\n"
-    "- \"fill\": color_rgba ([R,G,B,A] ints 0-255), position ([x,y] pixel coords 0-256)\n"
+    f"trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD})\n"
+    f'- "pencil": color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD})\n'
+    f'- "eraser": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD})\n'
+    f'- "fill": color_rgba ([R,G,B,A] ints 0-255), position ([x,y] pixel coords {_SYSTEM_PROMPT_COORD})\n'
     "- \"color_adjust\": brightness (int -100 to 100), contrast (float 0.5-2.0), "
     "saturation (float 0.0-2.0), exposure (int -100 to 100, default 0), "
     "highlights (int -100 to 100, default 0), shadows (int -100 to 100, default 0), "
     "hue_shift (int -180 to 180, default 0), temperature (int -100 to 100, default 0)\n"
     "- \"noop\": no additional fields — use when no more drawing is needed\n"
-    "- \"text_overlay\": text (str), position ([x,y] pixel coords 0-256), "
+    f'- "text_overlay": text (str), position ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), '
     "font_name (str, one of: simplex, duplex, complex, triplex, script; default simplex), "
     "font_size (float 0.2-5.0, default 1.0), color_rgba ([R,G,B,A] ints 0-255), "
     "thickness (int 1-10, default 1)\n"
     "- \"gaussian_blur\": radius (int 1-31, kernel = 2*radius+1; default 5)\n"
-    "- \"clone_stamp\": source ([x,y] pixel coords 0-256), destination ([x,y] pixel coords 0-256), "
+    f'- "clone_stamp": source ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), destination ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), '
     "size (int 1-50 radius in pixels; default 10)\n"
-    "- \"scatter_brush\": shape (str, one of: circle, leaf, star, triangle, dash; default circle), "
-    "color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256), "
+    '- "scatter_brush": shape (str, one of: circle, leaf, star, triangle, dash; default circle), '
+    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}), "
     "size (int 1-50 base stamp size; default 8), density (int 1-20 stamps per step; default 5), "
     "scatter (int 0-100 scatter distance percent; default 30), "
     "size_jitter (int 0-100 size variation percent; default 50), "
     "angle_jitter (int 0-360: for shape dash, max degrees added to stroke tangent; 0 = follow stroke; "
-    "for other shapes, max rotation in [0,angle_jitter] or full 360 if 0; default 0), seed (int; default 0)\n"
-    "- \"pattern_brush\": shape (str, one of: circle, leaf, star, triangle, dash; default leaf), "
-    "color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords 0-256), "
+    "for other shapes, max rotation in [0,angle_jitter] or full 360 if 0; default 0), seed (int; default 0), "
+    "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0), "
+    "base_angle (int -1 or 0-360; -1 = align dash to stroke tangent; else fixed base degrees; default -1)\n"
+    '- "pattern_brush": shape (str, one of: circle, leaf, star, triangle, dash; default leaf), '
+    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}), "
     "size (int 1-50 stamp size; default 10), spacing (int 5-100 pixels between stamps; default 20), "
-    "angle_jitter (int 0-90 rotation variation per stamp; default 15)\n\n"
+    "angle_jitter (int 0-90 rotation variation per stamp; default 15), "
+    "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0)\n\n"
     "Respond with valid JSON only."
 )
 
@@ -108,7 +115,7 @@ class BrushAction(BaseModel):
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
         assert len(v) >= 1, "Trajectory must have at least one point"
         for x, y in v:
-            assert 0 <= x <= 256 and 0 <= y <= 256, f"Coordinate ({x},{y}) out of canvas bounds"
+            assert 0 <= x <= CANVAS_SIZE and 0 <= y <= CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
 
@@ -250,7 +257,7 @@ class TextOverlayAction(BaseModel):
     @classmethod
     def _validate_position(cls, v: tuple[int, int]) -> tuple[int, int]:
         x, y = v
-        assert 0 <= x <= 256 and 0 <= y <= 256, f"Position ({x},{y}) out of canvas bounds"
+        assert 0 <= x <= CANVAS_SIZE and 0 <= y <= CANVAS_SIZE, f"Position ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("font_name")
@@ -299,7 +306,7 @@ class CloneStampAction(BaseModel):
     @classmethod
     def _validate_coords(cls, v: tuple[int, int]) -> tuple[int, int]:
         x, y = v
-        assert 0 <= x <= 256 and 0 <= y <= 256, f"Coordinate ({x},{y}) out of canvas bounds"
+        assert 0 <= x <= CANVAS_SIZE and 0 <= y <= CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("size")
@@ -320,6 +327,9 @@ class ScatterBrushAction(BaseModel):
     size_jitter: int = 50
     angle_jitter: int = 0
     seed: int = 0
+    thickness: int = 1
+    length: int = 0
+    base_angle: int = -1
 
     @field_validator("shape")
     @classmethod
@@ -369,6 +379,24 @@ class ScatterBrushAction(BaseModel):
         assert 0 <= v <= 360
         return v
 
+    @field_validator("thickness")
+    @classmethod
+    def _validate_thickness(cls, v: int) -> int:
+        assert 1 <= v <= 10
+        return v
+
+    @field_validator("length")
+    @classmethod
+    def _validate_length(cls, v: int) -> int:
+        assert 0 <= v <= 100
+        return v
+
+    @field_validator("base_angle")
+    @classmethod
+    def _validate_base_angle(cls, v: int) -> int:
+        assert v == -1 or 0 <= v <= 360
+        return v
+
 
 class PatternBrushAction(BaseModel):
     action_type: Literal["pattern_brush"]
@@ -378,6 +406,8 @@ class PatternBrushAction(BaseModel):
     size: int = 10
     spacing: int = 20
     angle_jitter: int = 15
+    thickness: int = 1
+    length: int = 0
 
     @field_validator("shape")
     @classmethod
@@ -413,6 +443,18 @@ class PatternBrushAction(BaseModel):
     @classmethod
     def _validate_angle_jitter(cls, v: int) -> int:
         assert 0 <= v <= 90
+        return v
+
+    @field_validator("thickness")
+    @classmethod
+    def _validate_thickness(cls, v: int) -> int:
+        assert 1 <= v <= 10
+        return v
+
+    @field_validator("length")
+    @classmethod
+    def _validate_length(cls, v: int) -> int:
+        assert 0 <= v <= 100
         return v
 
 
