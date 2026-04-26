@@ -43,7 +43,7 @@ results/
 
 # Large / generated (keep repo lean outside data/)
 models/
-unsloth_compiled_cache/
+# unsloth_compiled_cache/
 aaa/
 
 # Images / heavy binaries outside data/ (data/ is tracked via Git LFS — see .gitattributes)
