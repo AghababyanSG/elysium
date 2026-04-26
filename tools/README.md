@@ -48,8 +48,8 @@ Images are resized to 512×512 on load.
 
 | Path | Content |
 |------|---------|
-| `data/raw/frames/{name}{frame_id}.jpg` | Canvas snapshots at ~15 fps when the canvas changes |
-| `data/raw/sessions/{name}_{timestamp}.json` | All operations for the session |
+| `data/raw/frames/{session_stem}/{frame_id}.jpg` | Canvas snapshots at ~10 fps when the canvas changes; each session gets its own subdirectory so the same image can be annotated multiple times without collisions |
+| `data/raw/sessions/{session_stem}.json` | All operations for the session; `session_stem = {image_name}_{YYYYmmdd_HHMMSS}` |
 
 ### Log format
 

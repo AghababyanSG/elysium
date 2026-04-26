@@ -7,6 +7,7 @@ from elysium.schemas.actions import (
     ColorAdjustAction,
     EraserAction,
     FillAction,
+    ForwardWarpAction,
     GaussianBlurAction,
     NoopAction,
     PatternBrushAction,
@@ -30,6 +31,7 @@ __all__ = [
     "CloneStampAction",
     "ScatterBrushAction",
     "PatternBrushAction",
+    "ForwardWarpAction",
     "NoopAction",
     "parse_action",
 ]

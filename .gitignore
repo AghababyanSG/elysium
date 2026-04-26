@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Packaging / tooling
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+
+# Test & linters
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs & local runs
+*.log
+logs/
+wandb/
+outputs/
+tmp/
+results/
+
+# Large / generated (keep repo lean outside data/)
+models/
+unsloth_compiled_cache/
+aaa/
+
+# Images / heavy binaries outside data/ (data/ is tracked via Git LFS — see .gitattributes)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.tif
+*.ico
+*.webp
+*.svg
+*.eps
+*.avif
+*.pdf
+*.doc
+*.docx
+!data/**

@@ -1,0 +1,2 @@
+# Track everything under data/ with Git LFS (frames, sessions, processed datasets, etc.)
+data/** filter=lfs diff=lfs merge=lfs -text

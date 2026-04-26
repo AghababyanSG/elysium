@@ -9,6 +9,11 @@ description = "AI-driven image manipulation via Vision-Language-Action model"
 requires-python = ">=3.10"
 dependencies = [
     "loguru>=0.7.0",
+    "pydantic>=2.4.0",
+    "PyYAML>=6.0",
+    "numpy>=1.26.0,<3",
+    "Pillow>=10.0.0",
+    "opencv-python-headless>=4.9.0.80",
 ]
 
 [tool.setuptools.packages.find]

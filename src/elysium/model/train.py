@@ -28,6 +28,7 @@ from unsloth import FastVisionModel
 from unsloth.trainer import UnslothVisionDataCollator
 
 from elysium.log import logger
+from elysium.model.predict import ensure_rgb_canvas_size
 
 __all__ = ["run_training"]
 
@@ -52,7 +53,7 @@ def _build_conversation(sample: dict[str, Any], processor: Any) -> dict[str, Any
     messages = sample["messages"]
     image_path = sample["image"]
 
-    image = Image.open(image_path).convert("RGB")
+    image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))
 
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from elysium.engine.canvas import apply_color_adjust_rgb01, brush_dab_mask, brush_segment_mask, draw_shape_mask
+from elysium.engine.canvas import _bezier_points, apply_color_adjust_rgb01, brush_dab_mask, brush_segment_mask, draw_shape_mask
 from elysium.schemas.actions import CANVAS_SIZE
 
 
@@ -108,6 +109,7 @@ TOOL_ROWS: list[tuple[str, str, int, str]] = [
     ("text_overlay", "Text", pygame.K_t, "T"),
     ("gaussian_blur", "Blur", pygame.K_g, "G"),
     ("clone_stamp", "Clone", pygame.K_l, "L"),
+    ("forward_warp", "Warp", pygame.K_w, "W"),
 ]
 
 _FONT_CYCLE = ["simplex", "duplex", "complex", "triplex", "script"]
@@ -175,7 +177,8 @@ class ImageEditor:
 
         self.image_name = Path(image_path).stem
         self.image_path = str(Path(image_path).resolve())
-        self.output_dir = Path("data/raw/frames")
+        self.session_stem = f"{self.image_name}_{time.strftime('%Y%m%d_%H%M%S')}"
+        self.output_dir = Path("data/raw/frames") / self.session_stem
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir = Path("data/raw/sessions")
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -183,7 +186,7 @@ class ImageEditor:
         self.canvas_dirty = False
         self.start_time = time.time()
         self.last_save_time = self.start_time
-        self.fps = 15
+        self.fps = 10
         self.frame_interval = 1.0 / self.fps
         self.operations: list[dict] = []
 
@@ -230,6 +233,10 @@ class ImageEditor:
         self.scatter_shape_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
         self.pattern_shape_rect: pygame.Rect = pygame.Rect(0, 0, 0, 0)
 
+        self.warp_size: int = 20
+        self.warp_strength: int = 50
+        self._warp_trajectory: list[tuple[int, int]] = []
+
         self._stroke_trajectory: list[tuple[int, int]] = []
         self._stamp_rng: np.random.Generator = np.random.default_rng(0)
         self._stroke_seed: int = 0
@@ -241,6 +248,7 @@ class ImageEditor:
 
     def load_image(self, image_path: str) -> None:
         img = cv2.imread(image_path)
+        assert img is not None, f"Failed to load image: {image_path}"
         img = cv2.resize(img, (self.canvas_size, self.canvas_size), interpolation=cv2.INTER_LANCZOS4)
         self.canvas_array = img.copy()
         self.original_array = img.copy()
@@ -335,6 +343,10 @@ class ImageEditor:
                 return self.pattern_thickness
             case "PatLen":
                 return self.pattern_length
+            case "WarpSz":
+                return self.warp_size
+            case "WarpStr":
+                return self.warp_strength
             case _:
                 raise ValueError(label)
 
@@ -406,6 +418,10 @@ class ImageEditor:
                 self.pattern_thickness = value
             case "PatLen":
                 self.pattern_length = value
+            case "WarpSz":
+                self.warp_size = value
+            case "WarpStr":
+                self.warp_strength = value
             case _:
                 raise ValueError(label)
 
@@ -461,8 +477,7 @@ class ImageEditor:
             "duration_s": round(time.time() - self.start_time, 2),
             "operations": self.operations,
         }
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        log_path = self.log_dir / f"{self.image_name}_{timestamp}.json"
+        log_path = self.log_dir / f"{self.session_stem}.json"
         log_path.write_text(json.dumps(log_data, indent=2))
         print(f"Log saved: {log_path} ({len(self.operations)} operations)")
 
@@ -608,6 +623,50 @@ class ImageEditor:
         self.canvas_array = np.clip(canvas_f * (1.0 - a3) + shifted * a3, 0, 255).astype(np.uint8)
         actual_src = (dx - offset_x, dy - offset_y)
         self.log_operation("clone_stamp", self.clone_size, None, actual_src, (dx, dy))
+        self.canvas_dirty = True
+
+    def _forward_warp_apply(self, trajectory: list[tuple[int, int]]) -> None:
+        if len(trajectory) < 2:
+            return
+        h, w = self.canvas_array.shape[:2]
+        radius = float(self.warp_size)
+        r2 = radius * radius
+
+        xs = np.arange(w, dtype=np.float32)
+        ys = np.arange(h, dtype=np.float32)
+        map_x, map_y = np.meshgrid(xs, ys)
+
+        pts = _bezier_points(trajectory)
+
+        for i in range(len(pts) - 1):
+            x1, y1 = pts[i]
+            x2, y2 = pts[i + 1]
+            dx = float(x2 - x1)
+            dy = float(y2 - y1)
+            seg_len = np.hypot(dx, dy)
+            if seg_len < 1e-6:
+                continue
+            push_x = dx / seg_len * self.warp_strength * 0.5
+            push_y = dy / seg_len * self.warp_strength * 0.5
+
+            mx = (x1 + x2) * 0.5
+            my = (y1 + y2) * 0.5
+            xmin = int(max(0, mx - radius - 1))
+            xmax = int(min(w, mx + radius + 2))
+            ymin = int(max(0, my - radius - 1))
+            ymax = int(min(h, my + radius + 2))
+            if xmin >= xmax or ymin >= ymax:
+                continue
+
+            px = map_x[ymin:ymax, xmin:xmax]
+            py = map_y[ymin:ymax, xmin:xmax]
+            dist2 = (px - mx) ** 2 + (py - my) ** 2
+            weight = np.clip(1.0 - dist2 / r2, 0.0, 1.0) ** 2
+            map_x[ymin:ymax, xmin:xmax] -= push_x * weight
+            map_y[ymin:ymax, xmin:xmax] -= push_y * weight
+
+        warped = cv2.remap(self.canvas_array, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+        self.canvas_array = warped
         self.canvas_dirty = True
 
     def _scatter_brush_dab(self, pos: tuple[int, int], prev: tuple[int, int] | None = None) -> None:
@@ -1070,6 +1129,16 @@ class ImageEditor:
             self.screen.blit(src_surf, (ui_x + ly.pad, y))
             y += 20
 
+        if self.tool == "forward_warp":
+            self.sliders["WarpSz"] = self.draw_slider(
+                ui_x + ly.pad, y, ly.slider_w, "WarpSz", (160, 120, 200), 1, 100
+            )
+            y += 42
+            self.sliders["WarpStr"] = self.draw_slider(
+                ui_x + ly.pad, y, ly.slider_w, "WarpStr", (200, 140, 180), 1, 100
+            )
+            y += 42
+
         if self.tool == "color_adjust":
             for cfg in (
                 {"label": "Bright",   "color": (200, 200, 80),  "min": -100, "max": 100},
@@ -1298,6 +1367,8 @@ class ImageEditor:
                 self._stroke_checkpoint_pending = False
             elif self.tool == "clone_stamp":
                 self.clone_stamp_paint(canvas_pos)
+            elif self.tool == "forward_warp":
+                self._warp_trajectory = [canvas_pos]
             elif self.tool == "brush" and self.brush_mode == "scatter":
                 self._stroke_seed = int(np.random.randint(0, 2**31))
                 self._stamp_rng = np.random.default_rng(self._stroke_seed)
@@ -1320,6 +1391,8 @@ class ImageEditor:
                     self.clone_stamp_paint(canvas_pos)
                 elif self.tool == "gaussian_blur":
                     self.gaussian_blur_dab(canvas_pos)
+                elif self.tool == "forward_warp":
+                    self._warp_trajectory.append(canvas_pos)
                 elif self.tool == "brush" and self.brush_mode == "scatter":
                     self._stroke_trajectory.append(canvas_pos)
                     self._scatter_brush_dab(canvas_pos, self.prev_pos)
@@ -1341,6 +1414,19 @@ class ImageEditor:
             if self.tool == "brush" and self.brush_mode != "regular" and self._stroke_trajectory:
                 self._log_stamp_stroke()
                 self._stroke_trajectory = []
+            if self.tool == "forward_warp" and len(self._warp_trajectory) >= 2:
+                self._forward_warp_apply(self._warp_trajectory)
+                self.log_operation(
+                    "forward_warp",
+                    self.warp_size,
+                    None,
+                    self._warp_trajectory[0],
+                    self._warp_trajectory[-1],
+                    trajectory=[list(p) for p in self._warp_trajectory],
+                    strength=self.warp_strength,
+                )
+                self._warp_trajectory = []
+                self._stroke_checkpoint_pending = False
             self.drawing = False
             self.prev_pos = None
             self._stroke_checkpoint_pending = False
@@ -1376,6 +1462,12 @@ class ImageEditor:
                 sy = int(self.clone_source[1] * zoom)
                 pygame.draw.circle(self.screen, (100, 220, 255), (sx, sy), max(1, int(self.clone_size * zoom)), 1)
             return
+        if self.tool == "forward_warp":
+            r = max(1, int(self.warp_size * zoom))
+            s = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(s, (200, 160, 255, 100), (r + 2, r + 2), r, 1)
+            self.screen.blit(s, (x - r - 2, y - r - 2))
+            return
         if self.tool == "brush" and self.brush_mode == "scatter":
             cursor_size = self.scatter_size
         elif self.tool == "brush" and self.brush_mode == "pattern":
@@ -1393,7 +1485,7 @@ class ImageEditor:
         current_time = time.time()
         if current_time - self.last_save_time >= self.frame_interval:
             if self.canvas_dirty:
-                output_path = self.output_dir / f"{self.image_name}{self.frame_id}.jpg"
+                output_path = self.output_dir / f"{self.frame_id}.jpg"
                 cv2.imwrite(str(output_path), self.canvas_array)
                 self.canvas_dirty = False
                 self.frame_id += 1
@@ -1502,10 +1594,7 @@ class ImageEditor:
             self.clock.tick(60)
 
         if self.discard_session:
-            for i in range(self.frame_id):
-                p = self.output_dir / f"{self.image_name}{i}.jpg"
-                if p.exists():
-                    p.unlink()
+            shutil.rmtree(self.output_dir, ignore_errors=True)
             print("Session discarded, frames removed.")
         else:
             self.save_log()

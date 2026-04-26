@@ -33,7 +33,7 @@ from unsloth import FastVisionModel
 
 from elysium.engine.canvas import execute_chunk
 from elysium.log import logger
-from elysium.model.predict import _parse_chunk
+from elysium.model.predict import _parse_chunk, ensure_rgb_canvas_size
 from elysium.model.reward import compute_reward
 from elysium.schemas.actions import SYSTEM_PROMPT
 
@@ -243,12 +243,12 @@ def run_rl_training(
             gt_actions_json: str = sample.get("gt_actions", "")
             next_image_path: str = sample.get("next_image", "")
 
-            canvas_pil = Image.open(image_path).convert("RGB")
+            canvas_pil = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))
             canvas_np = _image_to_float32(canvas_pil)
 
             gt_next_np: np.ndarray | None = None
             if next_image_path:
-                gt_next_pil = Image.open(next_image_path).convert("RGB")
+                gt_next_pil = ensure_rgb_canvas_size(Image.open(next_image_path).convert("RGB"))
                 gt_next_np = _image_to_float32(gt_next_pil)
 
             gt_actions: list[dict[str, Any]] = []

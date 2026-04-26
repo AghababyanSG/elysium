@@ -17,6 +17,7 @@ __all__ = [
     "CloneStampAction",
     "ScatterBrushAction",
     "PatternBrushAction",
+    "ForwardWarpAction",
     "NoopAction",
     "Action",
     "ActionChunk",
@@ -27,7 +28,7 @@ CANVAS_SIZE = 512
 
 _STAMP_SHAPES = {"circle", "leaf", "star", "triangle", "dash"}
 
-_SYSTEM_PROMPT_COORD = f"0-{CANVAS_SIZE}"
+_SYSTEM_PROMPT_COORD = f"0-{CANVAS_SIZE - 1}"
 SYSTEM_PROMPT = (
     "You are a canvas drawing assistant. "
     "Given an image of a canvas and a user instruction, respond with ONLY a JSON object "
@@ -67,7 +68,9 @@ SYSTEM_PROMPT = (
     f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}), "
     "size (int 1-50 stamp size; default 10), spacing (int 5-100 pixels between stamps; default 20), "
     "angle_jitter (int 0-90 rotation variation per stamp; default 15), "
-    "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0)\n\n"
+    "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0)\n"
+    f'- "forward_warp": trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, min 2 points), '
+    "size (int 1-100 brush radius in pixels; default 20), strength (int 1-100 push intensity percent; default 50)\n\n"
     "Respond with valid JSON only."
 )
 
@@ -115,7 +118,7 @@ class BrushAction(BaseModel):
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
         assert len(v) >= 1, "Trajectory must have at least one point"
         for x, y in v:
-            assert 0 <= x <= CANVAS_SIZE and 0 <= y <= CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
 
@@ -144,6 +147,8 @@ class PencilAction(BaseModel):
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
         assert len(v) >= 1, "Trajectory must have at least one point"
+        for x, y in v:
+            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
 
@@ -156,6 +161,14 @@ class EraserAction(BaseModel):
     @classmethod
     def _validate_size(cls, v: int) -> int:
         assert 1 <= v <= 50, "Stroke size must be in [1, 50]"
+        return v
+
+    @field_validator("trajectory")
+    @classmethod
+    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        assert len(v) >= 1, "Trajectory must have at least one point"
+        for x, y in v:
+            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
 
@@ -178,6 +191,13 @@ class FillAction(BaseModel):
     @classmethod
     def _validate_color(cls, v: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
         assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
+        return v
+
+    @field_validator("position")
+    @classmethod
+    def _validate_position(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Position ({x},{y}) out of canvas bounds"
         return v
 
 
@@ -257,7 +277,7 @@ class TextOverlayAction(BaseModel):
     @classmethod
     def _validate_position(cls, v: tuple[int, int]) -> tuple[int, int]:
         x, y = v
-        assert 0 <= x <= CANVAS_SIZE and 0 <= y <= CANVAS_SIZE, f"Position ({x},{y}) out of canvas bounds"
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Position ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("font_name")
@@ -306,7 +326,7 @@ class CloneStampAction(BaseModel):
     @classmethod
     def _validate_coords(cls, v: tuple[int, int]) -> tuple[int, int]:
         x, y = v
-        assert 0 <= x <= CANVAS_SIZE and 0 <= y <= CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("size")
@@ -347,6 +367,8 @@ class ScatterBrushAction(BaseModel):
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
         assert len(v) >= 1, "Trajectory must have at least one point"
+        for x, y in v:
+            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("size")
@@ -425,6 +447,8 @@ class PatternBrushAction(BaseModel):
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
         assert len(v) >= 1, "Trajectory must have at least one point"
+        for x, y in v:
+            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("size")
@@ -458,6 +482,33 @@ class PatternBrushAction(BaseModel):
         return v
 
 
+class ForwardWarpAction(BaseModel):
+    action_type: Literal["forward_warp"]
+    trajectory: list[tuple[int, int]]
+    size: int = 20
+    strength: int = 50
+
+    @field_validator("trajectory")
+    @classmethod
+    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        assert len(v) >= 2, "Forward warp trajectory must have at least 2 points"
+        for x, y in v:
+            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+        return v
+
+    @field_validator("size")
+    @classmethod
+    def _validate_size(cls, v: int) -> int:
+        assert 1 <= v <= 100, "size must be in [1, 100]"
+        return v
+
+    @field_validator("strength")
+    @classmethod
+    def _validate_strength(cls, v: int) -> int:
+        assert 1 <= v <= 100, "strength must be in [1, 100]"
+        return v
+
+
 class NoopAction(BaseModel):
     action_type: Literal["noop"]
 
@@ -473,6 +524,7 @@ Action = (
     | CloneStampAction
     | ScatterBrushAction
     | PatternBrushAction
+    | ForwardWarpAction
     | NoopAction
 )
 
@@ -491,6 +543,7 @@ def parse_action(data: dict) -> Action:
         "clone_stamp": CloneStampAction,
         "scatter_brush": ScatterBrushAction,
         "pattern_brush": PatternBrushAction,
+        "forward_warp": ForwardWarpAction,
         "noop": NoopAction,
     }
     if tool not in dispatch:

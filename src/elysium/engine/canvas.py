@@ -24,6 +24,7 @@ from elysium.schemas.actions import (
     ColorAdjustAction,
     EraserAction,
     FillAction,
+    ForwardWarpAction,
     GaussianBlurAction,
     NoopAction,
     PatternBrushAction,
@@ -516,6 +517,49 @@ def _blend_rgba_on_rgb01(rgb: np.ndarray, coverage: np.ndarray, rgba: tuple[int,
     return np.clip(rgb * (1.0 - a3) + fg_rgb * a3, 0.0, 1.0)
 
 
+def _execute_forward_warp(canvas: np.ndarray, action: ForwardWarpAction) -> np.ndarray:
+    h, w = canvas.shape[:2]
+    pts = _bezier_points([(p[0], p[1]) for p in action.trajectory])
+
+    xs = np.arange(w, dtype=np.float32)
+    ys = np.arange(h, dtype=np.float32)
+    map_x, map_y = np.meshgrid(xs, ys)
+
+    radius = float(action.size)
+    r2 = radius * radius
+
+    for i in range(len(pts) - 1):
+        x1, y1 = pts[i]
+        x2, y2 = pts[i + 1]
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
+        seg_len = np.hypot(dx, dy)
+        if seg_len < 1e-6:
+            continue
+        push_x = dx / seg_len * action.strength * 0.5
+        push_y = dy / seg_len * action.strength * 0.5
+
+        mx = (x1 + x2) * 0.5
+        my = (y1 + y2) * 0.5
+        xmin = int(max(0, mx - radius - 1))
+        xmax = int(min(w, mx + radius + 2))
+        ymin = int(max(0, my - radius - 1))
+        ymax = int(min(h, my + radius + 2))
+        if xmin >= xmax or ymin >= ymax:
+            continue
+
+        px = map_x[ymin:ymax, xmin:xmax]
+        py = map_y[ymin:ymax, xmin:xmax]
+        dist2 = (px - mx) ** 2 + (py - my) ** 2
+        weight = np.clip(1.0 - dist2 / r2, 0.0, 1.0) ** 2
+        map_x[ymin:ymax, xmin:xmax] -= push_x * weight
+        map_y[ymin:ymax, xmin:xmax] -= push_y * weight
+
+    img_uint8 = (canvas * 255.0).clip(0, 255).astype(np.uint8)
+    warped = cv2.remap(img_uint8, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+    return warped.astype(np.float32) / 255.0
+
+
 def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | None = None) -> np.ndarray:
     """Execute a single action on the canvas.
 
@@ -609,6 +653,9 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
 
     if isinstance(action, PatternBrushAction):
         return _execute_pattern_brush(canvas, action)
+
+    if isinstance(action, ForwardWarpAction):
+        return _execute_forward_warp(canvas, action)
 
     assert False, f"Unhandled action type {type(action)}"
 

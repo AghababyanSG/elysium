@@ -1,18 +1,109 @@
 tasks:
-  mustache:
-    instruction: "Draw a mustache on the face"
+  bmw_car:
+    instruction: "Remove the car logo"
     sessions:
-      - del_piero_20260308_233931
-      - kaka_20260308_234123
-      - pirlo_20260308_234054
-  glasses:
-    instruction: "Draw glasses on the face"
-    sessions: []
-  beard:
-    instruction: "Draw a beard"
-    sessions: []
-  hair:
-    instruction: "Draw hair on top of head"
-    sessions: 
-      - stam_20260308_233753
-      - david_silva_20260308_233838
+      - bmw_car_20260413_051446
+  boat:
+    instruction: "turn the image to black and white, so the shadows of the waves will be dark"
+    sessions:
+      - boat_20260413_052110
+  cannavaro:
+    instruction: "Draw strong and thick mustache on man's face"
+    sessions:
+      - cannavaro_20260413_052924
+  dog:
+    instruction: "make the dog disappear"
+    sessions:
+      - doggy_20260413_053448
+  fishing:
+    instruction: "Rearrange the colors to look like it is photographed right before the dusk"
+    sessions:
+      - fishing_20260413_053723
+  honda_nsx_type_r:
+    instruction: "blur the car logo"
+    sessions:
+      - honda-nsx-type-r_20260413_054112
+  jaap_stam:
+    instruction: "draw funny mustache, from each side 3 brush lines"
+    sessions:
+      - jaap_stam_20260413_054526
+  marathon:
+    instruction: "blur all the faces in the image"
+    sessions:
+      - marathon_20260413_054815
+  mercedes:
+    instruction: "blur the logo and the number plate, make the image less shiny and bright"
+    sessions:
+      - mecedes_20260413_055029
+  moto:
+    instruction: 'make watermarks all over the image. the watermark text is "BMW"'
+    sessions:
+      - moto_20260413_055504
+  stain:
+    instruction: "remove the stain"
+    sessions:
+      - stain_20260421_235800
+  sun:
+    instruction: "draw a sun in top left corner"
+    sessions:
+      - white_512_20260422_000418
+  sun_smiley:
+    instruction: "draw a sun with smiley face in top left corner"
+    sessions:
+      - white_512_20260422_000922
+  house:
+    instruction: "draw a house with red roof, window and yellow door"
+    sessions:
+      - white_512_20260422_001353
+  sky_ground:
+    instruction: "draw green ground, sky and 2 clouds"
+    sessions:
+      - white_512_20260422_001925
+  grass_realistic:
+    instruction: "more realistic grass"
+    sessions:
+      - ground_sky_clouds_20260422_002630
+  lightning_clouds:
+    instruction: "draw 3 lightnings under the right cloud, the middle one big, two others smaller"
+    sessions:
+      - ground_sky_clouds_20260422_002920
+  strawberry_heart:
+    instruction: "deform the strawberry to look like a heart"
+    sessions:
+      - strawberry_20260422_005104
+  double_chin:
+    instruction: "deform to get rid of the double chin"
+    sessions:
+      - double_chin_20260422_005913
+  zlatan:
+    instruction: "draw 'baller' style beard"
+    sessions:
+      - zlatan_20260426_204620
+  sunset_man_silhouette:
+    instruction: "draw a small bush on right side of the horizon"
+    sessions:
+      - sunset_man_silhouette_20260426_204915
+  winking_dog:
+    instruction: "transform, so the left eye of the dog will be open too"
+    sessions:
+      - winking_dog_20260426_205237
+  visible_hair:
+    instruction: "get rid of the visible hair in the background"
+    sessions:
+      - visible_hair_20260426_205644
+  soldiers:
+    instruction: "blur the faces of the soldiers"
+    sessions:
+      - soldiers_20260426_210043
+  jolie:
+    instruction: "make the woman's face smile"
+    sessions:
+      - jolie_20260426_210322
+  jolie_sad:
+    instruction: "make the woman's face sad"
+    sessions:
+      - jolie_20260426_210443
+  cartoon_car:
+    instruction: "draw eyes on the car's windshield"
+    sessions:
+      - cartoon_car_20260426_210836

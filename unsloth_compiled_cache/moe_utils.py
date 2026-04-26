@@ -17,9 +17,10 @@ import torch
 import torch.nn.functional as F
 import os
 import shutil
+import sys
+import importlib.util
 from typing import Optional, Tuple
 from torch.autograd import Function
-from .utils import logger
 
 # Get compile location
 UNSLOTH_COMPILE_LOCATION = os.environ.get(
@@ -27,14 +28,26 @@ UNSLOTH_COMPILE_LOCATION = os.environ.get(
 )
 
 
+def _get_compile_location() -> str:
+    return os.path.abspath(
+        os.environ.get("UNSLOTH_COMPILE_LOCATION", UNSLOTH_COMPILE_LOCATION)
+    )
+
+
+def _log_info(message: str):
+    if os.environ.get("UNSLOTH_ENABLE_LOGGING", "0") == "1":
+        print(message)
+
+
 def install_to_cache(source_path, destination_filename=None):
     """
     Copies a file to the unsloth_compiled_cache directory
     to ensure it is available for compiled modules.
     """
-    if not os.path.exists(UNSLOTH_COMPILE_LOCATION):
+    compile_location = _get_compile_location()
+    if not os.path.exists(compile_location):
         try:
-            os.makedirs(UNSLOTH_COMPILE_LOCATION)
+            os.makedirs(compile_location)
         except:
             pass
 
@@ -42,7 +55,7 @@ def install_to_cache(source_path, destination_filename=None):
     if destination_filename is None:
         destination_filename = os.path.basename(current_file)
 
-    destination = os.path.abspath(os.path.join(UNSLOTH_COMPILE_LOCATION, destination_filename))
+    destination = os.path.abspath(os.path.join(compile_location, destination_filename))
 
     # If source and dest are different, copy.
     if current_file != destination:
@@ -53,6 +66,51 @@ def install_to_cache(source_path, destination_filename=None):
 
 
 install_to_cache(__file__, "moe_utils.py")
+
+_CACHED_FORWARD_MOE_BACKEND = None
+_CACHED_MOE_UTILS_MODULE = None
+
+
+def _load_cached_moe_utils_module():
+    global _CACHED_MOE_UTILS_MODULE
+
+    cache_file = os.path.abspath(os.path.join(_get_compile_location(), "moe_utils.py"))
+    current_file = os.path.abspath(__file__)
+    if not os.path.isfile(cache_file) or cache_file == current_file:
+        return None
+
+    try:
+        module_name = "unsloth_cached_moe_utils"
+        module = sys.modules.get(module_name, None)
+        if module is not None and os.path.abspath(getattr(module, "__file__", "")) == cache_file:
+            _CACHED_MOE_UTILS_MODULE = module
+            return module
+
+        spec = importlib.util.spec_from_file_location(module_name, cache_file)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        _CACHED_MOE_UTILS_MODULE = module
+        return module
+    except Exception:
+        return None
+
+
+def get_forward_moe_backend():
+    """
+    Resolve forward_moe_backend from the compiled cache copy when available.
+    Falls back to the local module definition.
+    """
+    global _CACHED_FORWARD_MOE_BACKEND
+    module = _load_cached_moe_utils_module()
+    if module is not None and hasattr(module, "forward_moe_backend"):
+        _CACHED_FORWARD_MOE_BACKEND = module.forward_moe_backend
+        return _CACHED_FORWARD_MOE_BACKEND
+
+    _CACHED_FORWARD_MOE_BACKEND = forward_moe_backend
+    return _CACHED_FORWARD_MOE_BACKEND
 
 # ============================================================================
 # Grouped MM wrapper
@@ -199,13 +257,13 @@ def select_moe_backend():
             return "unsloth_triton"
         if requested == "native_torch":
             return "native_torch"
-        logger.info(f"Unsloth: '{requested}' backend requested but is not available. Falling back to next available.")
+        _log_info(f"Unsloth: '{requested}' backend requested but is not available. Falling back to next available.")
 
     if _check_torch_grouped_mm_supported():
-        logger.info("Unsloth: Using MoE backend 'grouped_mm'")
+        _log_info("Unsloth: Using MoE backend 'grouped_mm'")
         return "grouped_mm"
     if _check_grouped_gemm_available():
-        logger.info("Unsloth: Using MoE backend 'unsloth_triton'")
+        _log_info("Unsloth: Using MoE backend 'unsloth_triton'")
         return "unsloth_triton"
     return "native_torch"
 
@@ -573,15 +631,19 @@ def _is_moe_experts_module(module) -> bool:
     import torch.nn as nn
 
     # Check for gate_up_proj pattern
+    # After PEFT's nn.utils.parametrize wrapping, accessing gate_up_proj
+    # returns torch.Tensor (not nn.Parameter), so we must accept both.
     if hasattr(module, "gate_up_proj"):
         param = module.gate_up_proj
-        if isinstance(param, nn.Parameter) and param.ndim == 3:
+        # 4-bit parameters are packed into 2D tensors (n_params, 1) or similar.
+        # Standard MoE weights are 3D (num_experts, in, out).
+        if isinstance(param, (nn.Parameter, torch.Tensor)) and param.ndim in (2, 3):
             return True
 
     # Check for w1/w2 pattern (separate gate/up projections)
     if hasattr(module, "w1") and hasattr(module, "w2"):
         w1 = module.w1
-        if isinstance(w1, nn.Parameter) and w1.ndim == 3:
+        if isinstance(w1, (nn.Parameter, torch.Tensor)) and w1.ndim in (2, 3):
             return True
 
     return False
@@ -683,6 +745,13 @@ def patch_param_wrapper_for_moe():
     # This Unsloth Zoo code section is licensed under AGPL3
 
     global _original_param_wrapper_forward
+
+    module = _load_cached_moe_utils_module()
+    if module is not None and hasattr(module, "patch_param_wrapper_for_moe"):
+        try:
+            return module.patch_param_wrapper_for_moe()
+        except Exception:
+            pass
 
     try:
         from peft.tuners.lora.layer import ParamWrapper
@@ -890,6 +959,8 @@ def forward_native_grouped_mm(
         up = up.clamp(min=-limit, max=limit)
         glu = gate * torch.sigmoid(gate * alpha)
         inter = (up + 1.0) * glu
+    elif hasattr(self, 'act_fn') and callable(self.act_fn):
+        inter = self.act_fn(gate) * up
     else:
         inter = F.silu(gate) * up
 
@@ -1114,10 +1185,12 @@ def forward_triton_grouped_gemm(
         is_first_gemm=True,
     )
 
-    # Apply SiLU activation and multiply gate with up
-    intermediate = _silu_and_mul(first_gemm_output)
-
-    # Grouped GEMM 2: down projection
+    # Apply activation and multiply gate with up
+    if hasattr(self, 'act_fn') and callable(self.act_fn):
+        gate, up = first_gemm_output.chunk(2, dim=-1)
+        intermediate = self.act_fn(gate) * up
+    else:
+        intermediate = _silu_and_mul(first_gemm_output)
 
     # Grouped GEMM 2: down projection
     # Prepare LoRA data
@@ -1173,9 +1246,8 @@ def forward_triton_grouped_gemm(
         second_gemm_output = second_gemm_output + lora_delta
 
     # Apply routing weights and sum across top_k experts
-    # Output shape: (num_tokens, top_k, hidden_dim) -> (num_tokens, hidden_dim)
-    # Ensure top_k_weights matches dtype (can be float32 from softmax)
     top_k_weights_casted = top_k_weights.to(hidden_states.dtype)
+    # Output shape: (num_tokens, top_k, hidden_dim) -> (num_tokens, hidden_dim)
     final_hidden_states = (
         second_gemm_output.view(num_tokens, top_k, hidden_dim)
         * top_k_weights_casted[..., None]

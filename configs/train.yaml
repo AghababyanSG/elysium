@@ -1,5 +1,5 @@
 model:
-  name: "unsloth/Qwen3.5-4B"
+  name: "Qwen/Qwen3.5-4B"
   load_in_4bit: true
 
 lora:
@@ -20,7 +20,7 @@ training:
   epochs: 3
   optimizer: "adamw_8bit"
   gradient_checkpointing: "unsloth"
-  max_seq_length: 2048
+  max_seq_length: 1024
   warmup_steps: 5
   logging_steps: 10
   save_steps: 50
@@ -40,7 +40,7 @@ data:
     chunks: "data/interim/chunks"
 
 inference:
-  max_chunks: 60
+  max_chunks: 500
   ensemble_execute_k: 1
 
 rl:

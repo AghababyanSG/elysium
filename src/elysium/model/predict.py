@@ -32,14 +32,21 @@ from unsloth import FastVisionModel
 
 from elysium.engine.canvas import execute_chunk
 from elysium.log import logger
-from elysium.schemas.actions import ActionChunk, parse_action, SYSTEM_PROMPT
+from elysium.schemas.actions import ActionChunk, CANVAS_SIZE, parse_action, SYSTEM_PROMPT
 
-__all__ = ["Predictor", "run_inference"]
+__all__ = ["Predictor", "ensure_rgb_canvas_size", "run_inference"]
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
     with config_path.open() as f:
         return yaml.safe_load(f)
+
+
+def ensure_rgb_canvas_size(image: Image.Image) -> Image.Image:
+    rgb = image.convert("RGB")
+    if rgb.size == (CANVAS_SIZE, CANVAS_SIZE):
+        return rgb
+    return rgb.resize((CANVAS_SIZE, CANVAS_SIZE), Image.Resampling.LANCZOS)
 
 
 def _image_to_float32(image: Image.Image) -> np.ndarray:
@@ -183,6 +190,7 @@ class Predictor:
         Returns:
             Tuple of (final edited image, list of all ActionChunks executed).
         """
+        image = ensure_rgb_canvas_size(image)
         original = _image_to_float32(image)
         canvas = original.copy()
         executed_chunks: list[ActionChunk] = []
@@ -281,7 +289,7 @@ def run_inference(
         ensemble_k=ensemble_k,
     )
 
-    image = Image.open(image_path).convert("RGB")
+    image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))
     logger.info("Running inference: '{}'", instruction)
 
     result_image, chunks = predictor.run(image, instruction, show_preview=show_preview)
