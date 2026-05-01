@@ -5,12 +5,15 @@
 # then:
 #   pip install -U pip
 #   pip install -r requirements.txt
+#   pip install -e .
+#
+# Optional dev tools:
+#   pip install -r requirements-dev.txt
 #
 # If `unsloth` fails to install, try an explicit CUDA extra after PyTorch is installed, e.g.:
 #   pip install "unsloth[cu124]"   # adjust cu121 / cu118 to your driver/toolkit
 #
-# Editable package (adds `elysium` on PYTHONPATH):
-#   pip install -e .
+# Git LFS (data/): after clone run `git lfs install` then `git lfs pull`.
 
 # --- Core (logging, config, schemas, canvas) ---
 loguru>=0.7.0
@@ -19,7 +22,6 @@ PyYAML>=6.0
 numpy>=1.26.0,<3
 Pillow>=10.0.0
 opencv-python-headless>=4.9.0.80
-# Use `opencv-python` instead if you rely on OpenCV GUI codecs outside the annotator.
 
 # --- Annotation tool (pygame UI) ---
 pygame>=2.5.0
@@ -38,3 +40,5 @@ accelerate>=0.34.0
 huggingface_hub>=0.25.0
 safetensors>=0.4.0
 bitsandbytes>=0.44.0
+sentencepiece>=0.1.99
+einops>=0.7.0

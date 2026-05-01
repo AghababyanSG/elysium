@@ -16,7 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from elysium.data.pipeline import run_pipeline
@@ -24,7 +24,7 @@ from elysium.data.pipeline import run_pipeline
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the full data preparation pipeline")
-    parser.add_argument("--config", type=Path, default=ROOT / "configs/train.yaml")
+    parser.add_argument("--config", type=Path, default=Path("configs/train.yaml"))
     parser.add_argument("--epsilon", type=float, default=None, help="RDP epsilon override")
     parser.add_argument(
         "--instructions",
@@ -39,7 +39,6 @@ def main() -> None:
     args = parse_args()
     run_pipeline(
         args.config,
-        root=ROOT,
         rdp_epsilon=args.epsilon,
         instructions_path=args.instructions,
     )

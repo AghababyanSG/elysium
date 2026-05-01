@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,10 @@ __all__ = ["chunk_session", "chunk_all"]
 logger = logging.getLogger(__name__)
 
 _NOOP = {"action_type": "noop"}
+
+
+def _relative_path(path: Path) -> str:
+    return os.path.relpath(path, Path.cwd())
 
 
 def _make_action_payload(stroke: dict[str, Any]) -> dict[str, Any]:
@@ -79,7 +84,7 @@ def chunk_session(
         chunks.append({
             "session": session,
             "chunk_index": i,
-            "observation_frame": str(frame_path.resolve()),
+            "observation_frame": _relative_path(frame_path),
             "actions": window,
         })
 

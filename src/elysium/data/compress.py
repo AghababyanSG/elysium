@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,13 @@ def _operations_to_strokes(operations: list[dict[str, Any]]) -> list[dict[str, A
     return strokes
 
 
+def _to_rgba(color: Sequence[int]) -> list[int]:
+    if len(color) == 3:
+        return [int(color[0]), int(color[1]), int(color[2]), 255]
+    assert len(color) == 4, f"Unexpected color shape: {color!r}"
+    return [int(c) for c in color]
+
+
 def _compress_trajectory(trajectory: list[list[int]], epsilon: float) -> list[list[int]]:
     """Apply RDP to a trajectory, preserving at least 2 points.
 
@@ -153,7 +161,7 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
         if tool == "fill":
             compressed_strokes.append({
                 "action_type": "fill",
-                "color_rgb": stroke["color"],
+                "color_rgba": _to_rgba(stroke["color"]),
                 "position": traj[0] if traj else [0, 0],
                 "frame_id": stroke["frame_id"],
             })
@@ -167,14 +175,14 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
         elif tool == "pencil":
             compressed_strokes.append({
                 "action_type": "pencil",
-                "color_rgb": stroke["color"],
+                "color_rgba": _to_rgba(stroke["color"]),
                 "trajectory": _compress_trajectory(traj, epsilon),
                 "frame_id": stroke["frame_id"],
             })
         else:
             compressed_strokes.append({
                 "action_type": "brush",
-                "color_rgb": stroke["color"],
+                "color_rgba": _to_rgba(stroke["color"]),
                 "stroke_size": max(1, stroke["size"]),
                 "trajectory": _compress_trajectory(traj, epsilon),
                 "frame_id": stroke["frame_id"],

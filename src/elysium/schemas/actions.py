@@ -88,9 +88,12 @@ class BrushAction(BaseModel):
             return data
         if "color_rgba" not in data and "color_rgb" in data:
             cr = data["color_rgb"]
-            if isinstance(cr, (list, tuple)) and len(cr) == 3:
+            if isinstance(cr, (list, tuple)) and len(cr) in (3, 4):
                 data = {k: v for k, v in data.items() if k != "color_rgb"}
-                data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+                if len(cr) == 3:
+                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+                else:
+                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), int(cr[3]))
         if "hardness" not in data:
             data = {**data, "hardness": 100}
         return data
@@ -132,9 +135,12 @@ class PencilAction(BaseModel):
     def _legacy_color_rgb(cls, data: Any) -> Any:
         if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
             cr = data["color_rgb"]
-            if isinstance(cr, (list, tuple)) and len(cr) == 3:
+            if isinstance(cr, (list, tuple)) and len(cr) in (3, 4):
                 data = {k: v for k, v in data.items() if k != "color_rgb"}
-                data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+                if len(cr) == 3:
+                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+                else:
+                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), int(cr[3]))
         return data
 
     @field_validator("color_rgba")
@@ -182,9 +188,12 @@ class FillAction(BaseModel):
     def _legacy_color_rgb(cls, data: Any) -> Any:
         if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
             cr = data["color_rgb"]
-            if isinstance(cr, (list, tuple)) and len(cr) == 3:
+            if isinstance(cr, (list, tuple)) and len(cr) in (3, 4):
                 data = {k: v for k, v in data.items() if k != "color_rgb"}
-                data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+                if len(cr) == 3:
+                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+                else:
+                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), int(cr[3]))
         return data
 
     @field_validator("color_rgba")
@@ -529,6 +538,34 @@ Action = (
 )
 
 
+def _clamp_canvas_scalar(v: Any) -> int:
+    x = int(v)
+    if x < 0:
+        return 0
+    if x >= CANVAS_SIZE:
+        return CANVAS_SIZE - 1
+    return x
+
+
+def _clamp_canvas_point(pt: Any) -> tuple[int, int]:
+    if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+        raise ValueError(f"Expected [x,y] point, got {pt!r}")
+    return (_clamp_canvas_scalar(pt[0]), _clamp_canvas_scalar(pt[1]))
+
+
+def _clamp_action_coords_for_model_output(data: dict[str, Any]) -> dict[str, Any]:
+    out = dict(data)
+    tr = out.get("trajectory")
+    if isinstance(tr, list):
+        out["trajectory"] = [_clamp_canvas_point(p) for p in tr]
+    for key in ("position", "source", "destination"):
+        pt = out.get(key)
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+            c = _clamp_canvas_point(pt)
+            out[key] = [c[0], c[1]]
+    return out
+
+
 def parse_action(data: dict) -> Action:
     """Deserialize a raw dict into the correct Action subtype."""
     tool = data.get("action_type")
@@ -548,7 +585,7 @@ def parse_action(data: dict) -> Action:
     }
     if tool not in dispatch:
         raise ValueError(f"Unknown action_type '{tool}'. Valid: {list(dispatch)}")
-    return dispatch[tool].model_validate(data)
+    return dispatch[tool].model_validate(_clamp_action_coords_for_model_output(dict(data)))
 
 
 class ActionChunk(BaseModel):

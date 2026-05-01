@@ -1,2 +1,4 @@
-# Track everything under data/ with Git LFS (frames, sessions, processed datasets, etc.)
+# After clone: run `git lfs install` once per machine, then `git lfs pull` if needed.
+#
+# Everything under data/ uses Git LFS (frames, Arrow datasets, session JSON, etc.).
 data/** filter=lfs diff=lfs merge=lfs -text

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import time
@@ -11,13 +12,17 @@ import cv2
 import numpy as np
 import pygame
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).parents[1]
 _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from elysium.engine.canvas import _bezier_points, apply_color_adjust_rgb01, brush_dab_mask, brush_segment_mask, draw_shape_mask
 from elysium.schemas.actions import CANVAS_SIZE
+
+
+def _relative_path(path: str | Path) -> str:
+    return os.path.relpath(path, Path.cwd())
 
 
 def _blend_bgr_mask_inplace(
@@ -176,7 +181,7 @@ class ImageEditor:
         self.swatch_cur_rect = pygame.Rect(0, 0, 0, 0)
 
         self.image_name = Path(image_path).stem
-        self.image_path = str(Path(image_path).resolve())
+        self.image_path = _relative_path(image_path)
         self.session_stem = f"{self.image_name}_{time.strftime('%Y%m%d_%H%M%S')}"
         self.output_dir = Path("data/raw/frames") / self.session_stem
         self.output_dir.mkdir(parents=True, exist_ok=True)

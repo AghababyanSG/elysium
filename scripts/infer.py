@@ -17,7 +17,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from elysium.model.predict import run_inference
@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=ROOT / "models/checkpoints/final",
+        default=Path("models/checkpoints/final"),
         help="Path to fine-tuned model checkpoint",
     )
     parser.add_argument(
@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to save result image (default: outputs/<stem>_result.jpg)",
     )
-    parser.add_argument("--config", type=Path, default=ROOT / "configs/train.yaml")
+    parser.add_argument("--config", type=Path, default=Path("configs/train.yaml"))
     parser.add_argument(
         "--preview",
         action="store_true",
@@ -62,7 +62,7 @@ def main() -> None:
 
     output_path = args.output
     if output_path is None:
-        output_path = ROOT / "outputs" / f"{args.image.stem}_result.jpg"
+        output_path = Path("outputs") / f"{args.image.stem}_result.jpg"
 
     run_inference(
         image_path=args.image,

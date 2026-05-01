@@ -11,6 +11,7 @@ venv/
 !.env.example
 
 # Packaging / tooling
+*.egg
 *.egg-info/
 .eggs/
 dist/
@@ -29,9 +30,14 @@ coverage.xml
 
 # OS / editor
 .DS_Store
+Thumbs.db
 *.swp
 *.swo
 *~
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
 
 # Logs & local runs
 *.log
@@ -40,11 +46,14 @@ wandb/
 outputs/
 tmp/
 results/
+runs/
+lightning_logs/
+mlruns/
+tensorboard/
 
-# Large / generated (keep repo lean outside data/)
+# Large / generated (keep repo lean)
 models/
-# unsloth_compiled_cache/
-aaa/
+unsloth_compiled_cache/
 
 # Images / heavy binaries outside data/ (data/ is tracked via Git LFS — see .gitattributes)
 *.jpg

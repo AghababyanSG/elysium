@@ -11,9 +11,8 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-SESSIONS_DIR = ROOT / "data/raw/sessions"
-FRAMES_DIR = ROOT / "data/raw/frames"
+SESSIONS_DIR = Path("data/raw/sessions")
+FRAMES_DIR = Path("data/raw/frames")
 
 
 def migrate() -> None:

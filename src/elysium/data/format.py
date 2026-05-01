@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,10 @@ from elysium.schemas.actions import SYSTEM_PROMPT
 __all__ = ["build_dataset"]
 
 logger = logging.getLogger(__name__)
+
+
+def _relative_path(path: str | Path) -> str:
+    return os.path.relpath(path, Path.cwd())
 
 
 def _load_instructions(instructions_path: Path) -> dict[str, str]:
@@ -94,7 +99,7 @@ def _to_conversation(
     """
     action_json = json.dumps({"actions": chunk["actions"]}, separators=(",", ":"))
 
-    image_path = str(Path(chunk["observation_frame"]).resolve())
+    image_path = _relative_path(chunk["observation_frame"])
     return {
         "image": image_path,
         "gt_actions": action_json,
@@ -155,7 +160,7 @@ def build_dataset(
             continue
         for i, chunk in enumerate(chunks):
             next_frame = (
-                str(Path(chunks[i + 1]["observation_frame"]).resolve())
+                _relative_path(chunks[i + 1]["observation_frame"])
                 if i + 1 < len(chunks)
                 else ""
             )

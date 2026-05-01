@@ -11,7 +11,6 @@ Output: models/checkpoints/
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +20,13 @@ os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")
 
 import torch
 import yaml
-from datasets import load_from_disk
-from huggingface_hub import scan_cache_dir
-from trl import SFTConfig, SFTTrainer
 from unsloth import FastVisionModel
-from unsloth.trainer import UnslothVisionDataCollator
+from datasets import load_from_disk
+from trl import SFTConfig, SFTTrainer
 
 from elysium.log import logger
-from elysium.model.predict import ensure_rgb_canvas_size
+from elysium.model.predict import cached_repo_ids, ensure_rgb_canvas_size
+from unsloth_zoo.vision_utils import UnslothVisionDataCollator
 
 __all__ = ["run_training"]
 
@@ -38,54 +36,53 @@ def _load_config(config_path: Path) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def _build_conversation(sample: dict[str, Any], processor: Any) -> dict[str, Any]:
-    """Apply the model's chat template to a single dataset record.
+class ElysiumActionVisionDataCollator(UnslothVisionDataCollator):
+    def __call__(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
+        from PIL import Image
 
-    Args:
-        sample: Record with "messages" and "image" fields.
-        processor: Qwen3.5 processor.
+        pc: list[dict[str, Any]] = []
+        for ex in examples:
+            msgs = ex["messages"]
+            assert msgs[-1]["role"] == "assistant"
+            img = ensure_rgb_canvas_size(Image.open(ex["image"]).convert("RGB"))
+            pc.append(
+                {
+                    "prompt": msgs[:-1],
+                    "completion": [msgs[-1]],
+                    "images": [img],
+                }
+            )
+        batch = super().__call__(pc)
+        if "mm_token_type_ids" in batch:
+            input_len = batch["input_ids"].shape[1]
+            mm_len = batch["mm_token_type_ids"].shape[1]
+            if mm_len < input_len:
+                pad = torch.zeros(
+                    batch["mm_token_type_ids"].shape[0],
+                    input_len - mm_len,
+                    dtype=batch["mm_token_type_ids"].dtype,
+                    device=batch["mm_token_type_ids"].device,
+                )
+                batch["mm_token_type_ids"] = torch.cat([batch["mm_token_type_ids"], pad], dim=1)
+            elif mm_len > input_len:
+                batch["mm_token_type_ids"] = batch["mm_token_type_ids"][:, :input_len]
+        return batch
 
-    Returns:
-        Dict with "input_ids", "attention_mask", "pixel_values", "labels".
-    """
-    from PIL import Image
-
-    messages = sample["messages"]
-    image_path = sample["image"]
-
-    image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))
-
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-
-    inputs = processor(
-        text=[text],
-        images=[image],
-        return_tensors="pt",
-        padding=False,
-    )
-
-    input_ids = inputs["input_ids"][0]
-    attention_mask = inputs["attention_mask"][0]
-    pixel_values = inputs.get("pixel_values")
-    if pixel_values is not None:
-        pixel_values = pixel_values[0]
-
-    labels = input_ids.clone()
-    assistant_token_id = processor.tokenizer.convert_tokens_to_ids("<|im_start|>")
-
-    label_mask_started = False
-    for idx, tok in enumerate(input_ids):
-        if not label_mask_started:
-            labels[idx] = -100
-        if tok.item() == assistant_token_id:
-            label_mask_started = True
-
-    return {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "pixel_values": pixel_values,
-        "labels": labels,
-    }
+    def _render_chat(
+        self,
+        prompt_messages: list[Any],
+        completion_messages: list[Any] | None = None,
+        add_generation_prompt: bool = False,
+        continue_final_message: bool = False,
+    ) -> str:
+        merged = prompt_messages + (completion_messages or [])
+        return self.processor.apply_chat_template(
+            merged,
+            tokenize=False,
+            add_generation_prompt=add_generation_prompt,
+            continue_final_message=continue_final_message,
+            enable_thinking=False,
+        )
 
 
 def run_training(
@@ -112,8 +109,7 @@ def run_training(
         train_cfg["batch_size"] = batch_size
 
     model_name = model_cfg["name"]
-    cached_repos = {r.repo_id for r in scan_cache_dir().repos}
-    local_only = model_name in cached_repos
+    local_only = model_name in cached_repo_ids()
     logger.info(
         "Loading model {} (4bit={}, local_files_only={})",
         model_name,
@@ -158,7 +154,7 @@ def run_training(
         learning_rate=train_cfg["learning_rate"],
         num_train_epochs=train_cfg["epochs"],
         optim=train_cfg["optimizer"],
-        max_seq_length=train_cfg["max_seq_length"],
+        max_length=train_cfg["max_seq_length"],
         warmup_steps=train_cfg["warmup_steps"],
         logging_steps=train_cfg["logging_steps"],
         save_steps=train_cfg["save_steps"],
@@ -170,10 +166,16 @@ def run_training(
         dataset_kwargs={"skip_prepare_dataset": True},
     )
 
+    data_collator = ElysiumActionVisionDataCollator(
+        model,
+        tokenizer,
+        max_seq_length=train_cfg["max_seq_length"],
+    )
+
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
-        data_collator=UnslothVisionDataCollator(model, tokenizer),
+        processing_class=tokenizer,
+        data_collator=data_collator,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         args=sft_config,

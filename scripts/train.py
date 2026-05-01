@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from elysium.model.train import run_training
@@ -22,7 +22,7 @@ from elysium.model.train import run_training
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fine-tune Qwen3.5 with QLoRA or REINFORCE RL")
-    parser.add_argument("--config", type=Path, default=ROOT / "configs/train.yaml")
+    parser.add_argument("--config", type=Path, default=Path("configs/train.yaml"))
     parser.add_argument("--epochs", type=int, default=None, help="Override SFT epochs")
     parser.add_argument("--batch-size", type=int, default=None, help="Override SFT batch size")
     parser.add_argument(

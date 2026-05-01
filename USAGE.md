@@ -13,7 +13,7 @@
 
 | File | Role |
 |------|------|
-| **`configs/train.yaml`** | Main training config: base model (`model.name`), LoRA, optimizer, batching, `max_seq_length`, data paths (`data.*`), `train_split`, checkpoint dir, RL block (`rl`), and inference defaults used by `scripts/train.py`, `scripts/infer.py`, and `scripts/prepare_data.py` (via `--config`). |
+| **`configs/train.yaml`** | Main training config: base model (`model.name`), LoRA, optimizer, batching, `max_seq_length`, data paths (`data.*`), `train_split`, checkpoint dir, RL block (`rl`), and inference runtime settings (`inference.max_chunks`, `inference.ensemble_execute_k`). Used by `scripts/train.py`, `scripts/infer.py`, and `scripts/prepare_data.py` via `--config`. |
 | **`configs/instructions.yaml`** | Task definitions: natural-language **instruction** per task plus the **session** ids that link to JSON logs under `data/raw/sessions/`. Referenced from `train.yaml` (`data.instructions`). |
 
 ---
@@ -64,13 +64,19 @@ pip install -e .
 
 `requirements.txt` pins the ML stack (Unsloth, TRL, Transformers, etc.) and tools (Pygame, OpenCV, `rdp`, Pydantic, …). If `unsloth` fails to resolve against your Torch/CUDA build, install a matching extra after reading the comment block at the top of `requirements.txt`, or follow [Unsloth’s install docs](https://github.com/unslothai/unsloth).
 
-Optional (advanced): some setups use Unsloth from Git with a CUDA-torch extra, for example:
+Optional (advanced): some setups need an explicit Unsloth CUDA extra after PyTorch is installed, for example:
 
 ```bash
-pip install "unsloth[cu124-torch240] @ git+https://github.com/unslothai/unsloth.git"
+pip install "unsloth[cu124]"
 ```
 
 Only use that if the default `pip install -r requirements.txt` path does not work on your VM.
+
+If you plan to use inference preview windows (`scripts/infer.py --preview`), also install Matplotlib:
+
+```bash
+pip install matplotlib
+```
 
 ### 5. Hugging Face CLI (optional, for pre-downloading weights)
 
@@ -93,7 +99,7 @@ Run the annotation tool for each new training session:
 python tools/annotate.py data/raw/images/pirlo.jpg
 ```
 
-More detail on the Pygame UI (shortcuts, tools) is in [`tools/README.md`](tools/README.md). The annotator and action schema evolve; if something is missing there, check `tools/annotate.py` and `src/elysium/schemas/actions.py`.
+More detail on the Pygame UI (shortcuts, tools) is in [`tools/README.md`](tools/README.md). The current annotator includes brush, pencil, eraser, fill, picker, color adjust, text overlay, blur, clone stamp, and forward warp tools. The annotator and action schema evolve; if something is missing there, check `tools/annotate.py` and `src/elysium/schemas/actions.py`.
 
 Each session saves:
 
@@ -183,6 +189,8 @@ Options:
 --config      Path to config file                (default: configs/train.yaml)
 --preview     Open a live preview window; close it to stop inference early
 ```
+
+The `--config` file controls model/data settings plus `inference.max_chunks` and `inference.ensemble_execute_k`. CLI path defaults such as `--checkpoint` and `--output` are defined by `scripts/infer.py`.
 
 ---
 
