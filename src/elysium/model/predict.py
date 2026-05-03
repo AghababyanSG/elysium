@@ -103,6 +103,7 @@ class Predictor:
         horizon: Number of actions per chunk.
         max_chunks: Maximum inference iterations before stopping.
         ensemble_k: Number of actions to execute before re-observing.
+        max_new_tokens: Upper bound on assistant tokens per chunk decode.
     """
 
     def __init__(
@@ -112,12 +113,14 @@ class Predictor:
         horizon: int = 5,
         max_chunks: int = 20,
         ensemble_k: int = 5,
+        max_new_tokens: int = 4096,
     ) -> None:
         self.model = model
         self.processor = processor
         self.horizon = horizon
         self.max_chunks = max_chunks
         self.ensemble_k = min(ensemble_k, horizon)
+        self.max_new_tokens = max_new_tokens
 
     @torch.inference_mode()  # type: ignore[misc]
     def _predict_chunk(
@@ -146,7 +149,7 @@ class Predictor:
         stop_crit = JsonBalanceStoppingCriteria(tokenizer=tok, prompt_len=prompt_len)
         output_ids = self.model.generate(
             **inputs,
-            max_new_tokens=1024,
+            max_new_tokens=self.max_new_tokens,
             do_sample=do_sample,
             temperature=0.3 if do_sample else None,
             top_p=0.9 if do_sample else None,
@@ -256,6 +259,7 @@ def run_inference(
     horizon = cfg["data"]["action_horizon"]
     max_chunks = infer_cfg.get("max_chunks", 20)
     ensemble_k = infer_cfg.get("ensemble_execute_k", horizon)
+    max_new_tokens = int(infer_cfg.get("max_new_tokens", 4096))
 
     base_model = cfg["model"]["name"]
     local_only = base_model in cached_repo_ids()
@@ -273,6 +277,7 @@ def run_inference(
         horizon=horizon,
         max_chunks=max_chunks,
         ensemble_k=ensemble_k,
+        max_new_tokens=max_new_tokens,
     )
 
     image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))

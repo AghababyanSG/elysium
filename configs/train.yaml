@@ -40,8 +40,9 @@ data:
     chunks: "data/interim/chunks"
 
 inference:
-  max_chunks: 15000
+  max_chunks: 100
   ensemble_execute_k: 1
+  max_new_tokens: 4096
 
 rl:
   enabled: true

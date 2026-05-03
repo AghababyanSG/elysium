@@ -561,7 +561,14 @@ def _clamp_action_coords_for_model_output(data: dict[str, Any]) -> dict[str, Any
     out = dict(data)
     tr = out.get("trajectory")
     if isinstance(tr, list):
-        out["trajectory"] = [_clamp_canvas_point(p) for p in tr]
+        clamped = [_clamp_canvas_point(p) for p in tr]
+        if len(clamped) > MAX_TRAJECTORY_POINTS:
+            from elysium.data.compress import _compress_trajectory
+
+            as_lists = [[int(x), int(y)] for x, y in clamped]
+            out["trajectory"] = _compress_trajectory(as_lists, 2.0)
+        else:
+            out["trajectory"] = clamped
     for key in ("position", "source", "destination"):
         pt = out.get(key)
         if isinstance(pt, (list, tuple)) and len(pt) >= 2:
