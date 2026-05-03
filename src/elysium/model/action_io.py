@@ -13,6 +13,8 @@ __all__ = [
     "split_prompt_completion_texts",
     "build_generation_processor_inputs",
     "strip_redacted_thinking_lead",
+    "JsonBalanceState",
+    "json_balance_advance",
     "extract_action_json",
     "parse_action_chunk",
 ]
@@ -101,34 +103,59 @@ def strip_redacted_thinking_lead(raw: str) -> str:
     return t.strip()
 
 
+class JsonBalanceState:
+    """Mutable state for incremental JSON-object balance tracking."""
+
+    __slots__ = ("start", "depth", "in_str", "esc")
+
+    def __init__(self) -> None:
+        self.start: int | None = None
+        self.depth: int = 0
+        self.in_str: bool = False
+        self.esc: bool = False
+
+
+def json_balance_advance(state: JsonBalanceState, ch: str, pos: int) -> bool:
+    """Advance the balance state machine by one character.
+
+    Args:
+        state: Mutable balance state.
+        ch: Next character from the stream.
+        pos: Absolute position of `ch` in the original string (used to record start).
+
+    Returns:
+        True when the outermost `{...}` has just been closed (depth returns to 0).
+    """
+    if state.start is None:
+        if ch == "{":
+            state.start = pos
+            state.depth = 1
+        return False
+    if state.in_str:
+        if state.esc:
+            state.esc = False
+        elif ch == "\\":
+            state.esc = True
+        elif ch == '"':
+            state.in_str = False
+        return False
+    if ch == '"':
+        state.in_str = True
+    elif ch == "{":
+        state.depth += 1
+    elif ch == "}":
+        state.depth -= 1
+        if state.depth == 0:
+            return True
+    return False
+
+
 def _first_balanced_json_object(s: str) -> str | None:
-    start: int | None = None
-    depth = 0
-    in_str = False
-    esc = False
+    state = JsonBalanceState()
     for i, ch in enumerate(s):
-        if start is None:
-            if ch == "{":
-                start = i
-                depth = 1
-            continue
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                assert start is not None
-                return s[start : i + 1]
+        if json_balance_advance(state, ch, i):
+            assert state.start is not None
+            return s[state.start : i + 1]
     return None
 
 

@@ -110,16 +110,24 @@ def _compress_trajectory(trajectory: list[list[int]], epsilon: float) -> list[li
         epsilon: RDP tolerance in pixels. Higher = more compression.
 
     Returns:
-        Compressed list of [x, y] control points.
+        Compressed list of [x, y] control points, capped at MAX_TRAJECTORY_POINTS.
     """
+    from elysium.schemas.actions import MAX_TRAJECTORY_POINTS
+
     if len(trajectory) <= 2:
-        return trajectory
+        return trajectory[:MAX_TRAJECTORY_POINTS]
     pts = np.array(trajectory, dtype=float)
     mask = rdp(pts, epsilon=epsilon, return_mask=True)
     compressed = pts[mask].astype(int).tolist()
     if len(compressed) < 2:
-        return [trajectory[0], trajectory[-1]]
-    return compressed
+        compressed = [trajectory[0], trajectory[-1]]
+    if len(compressed) <= MAX_TRAJECTORY_POINTS:
+        return compressed
+    indices = np.linspace(0, len(compressed) - 1, MAX_TRAJECTORY_POINTS, dtype=int)
+    subsampled = [compressed[i] for i in indices]
+    subsampled[0] = compressed[0]
+    subsampled[-1] = compressed[-1]
+    return subsampled
 
 
 def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0) -> list[dict[str, Any]]:

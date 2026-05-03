@@ -28,6 +28,7 @@ from datasets import Value
 from datasets import load_from_disk
 from PIL import Image
 from pydantic import ValidationError
+from transformers import TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
 from unsloth import FastVisionModel
 
@@ -42,6 +43,15 @@ from elysium.model.predict import cached_repo_ids, ensure_rgb_canvas_size
 from elysium.model.reward import visual_reward
 
 __all__ = ["run_rl_training"]
+
+
+class _AssertParamsFinite(TrainerCallback):
+    def on_step_begin(self, args, state, control, model=None, **kwargs):
+        for name, p in model.named_parameters():
+            if p.requires_grad and not torch.isfinite(p).all():
+                raise AssertionError(
+                    f"Non-finite parameter at step {state.global_step}: {name}"
+                )
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -167,7 +177,7 @@ def run_rl_training(
         num_generations=rl_cfg.get("num_generations", 4),
         temperature=rl_cfg.get("temperature", 0.7),
         top_p=rl_cfg.get("top_p", 0.9),
-        beta=rl_cfg.get("beta", 0.04),
+        beta=rl_cfg.get("beta", 0.1),
         max_prompt_length=rl_cfg.get("max_prompt_length", 2048),
         max_completion_length=rl_cfg.get("max_completion_length", 512),
         fp16=not torch.cuda.is_bf16_supported(),
@@ -177,7 +187,9 @@ def run_rl_training(
         logging_steps=1,
         save_steps=rl_cfg.get("save_steps", 50),
         log_completions=True,
-        max_grad_norm=rl_cfg.get("max_grad_norm", 0.3),
+        max_grad_norm=rl_cfg.get("max_grad_norm", 0.1),
+        warmup_ratio=rl_cfg.get("warmup_ratio", 0.1),
+        lr_scheduler_type=rl_cfg.get("lr_scheduler_type", "cosine"),
     )
 
     trainer = GRPOTrainer(
@@ -186,6 +198,7 @@ def run_rl_training(
         args=grpo_config,
         train_dataset=grpo_dataset,
         reward_funcs=[_make_reward_fn(horizon)],
+        callbacks=[_AssertParamsFinite()],
     )
 
     logger.info(

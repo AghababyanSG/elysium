@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator, model_validator
 
 __all__ = [
     "CANVAS_SIZE",
+    "MAX_TRAJECTORY_POINTS",
     "BrushAction",
     "PencilAction",
     "EraserAction",
@@ -25,8 +26,11 @@ __all__ = [
 ]
 
 CANVAS_SIZE = 512
+MAX_TRAJECTORY_POINTS = 64
 
 _STAMP_SHAPES = {"circle", "leaf", "star", "triangle", "dash"}
+
+_ACTION_TYPE_ALIASES: dict[str, str] = {"blur": "gaussian_blur"}
 
 _SYSTEM_PROMPT_COORD = f"0-{CANVAS_SIZE - 1}"
 SYSTEM_PROMPT = (
@@ -39,9 +43,9 @@ SYSTEM_PROMPT = (
     "Available action types and their required fields:\n"
     '- "brush": color_rgba ([R,G,B,A] ints 0-255), stroke_size (int 1-50), '
     "hardness (int 0-100, 0 = invisible, 100 = hard edge like a stamp), "
-    f"trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD})\n"
-    f'- "pencil": color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD})\n'
-    f'- "eraser": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD})\n'
+    f"trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points)\n"
+    f'- "pencil": color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points)\n'
+    f'- "eraser": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points)\n'
     f'- "fill": color_rgba ([R,G,B,A] ints 0-255), position ([x,y] pixel coords {_SYSTEM_PROMPT_COORD})\n'
     "- \"color_adjust\": brightness (int -100 to 100), contrast (float 0.5-2.0), "
     "saturation (float 0.0-2.0), exposure (int -100 to 100, default 0), "
@@ -56,7 +60,7 @@ SYSTEM_PROMPT = (
     f'- "clone_stamp": source ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), destination ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), '
     "size (int 1-50 radius in pixels; default 10)\n"
     '- "scatter_brush": shape (str, one of: circle, leaf, star, triangle, dash; default circle), '
-    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}), "
+    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points), "
     "size (int 1-50 base stamp size; default 8), density (int 1-20 stamps per step; default 5), "
     "scatter (int 0-100 scatter distance percent; default 30), "
     "size_jitter (int 0-100 size variation percent; default 50), "
@@ -65,11 +69,11 @@ SYSTEM_PROMPT = (
     "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0), "
     "base_angle (int -1 or 0-360; -1 = align dash to stroke tangent; else fixed base degrees; default -1)\n"
     '- "pattern_brush": shape (str, one of: circle, leaf, star, triangle, dash; default leaf), '
-    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}), "
+    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points), "
     "size (int 1-50 stamp size; default 10), spacing (int 5-100 pixels between stamps; default 20), "
     "angle_jitter (int 0-90 rotation variation per stamp; default 15), "
     "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0)\n"
-    f'- "forward_warp": trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, min 2 points), '
+    f'- "forward_warp": trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, min 2, max {MAX_TRAJECTORY_POINTS} points), '
     "size (int 1-100 brush radius in pixels; default 20), strength (int 1-100 push intensity percent; default 50)\n\n"
     "Respond with valid JSON only."
 )
@@ -119,7 +123,7 @@ class BrushAction(BaseModel):
     @field_validator("trajectory")
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert len(v) >= 1, "Trajectory must have at least one point"
+        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
         for x, y in v:
             assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
@@ -152,7 +156,7 @@ class PencilAction(BaseModel):
     @field_validator("trajectory")
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert len(v) >= 1, "Trajectory must have at least one point"
+        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
         for x, y in v:
             assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
@@ -172,7 +176,7 @@ class EraserAction(BaseModel):
     @field_validator("trajectory")
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert len(v) >= 1, "Trajectory must have at least one point"
+        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
         for x, y in v:
             assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
@@ -375,7 +379,7 @@ class ScatterBrushAction(BaseModel):
     @field_validator("trajectory")
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert len(v) >= 1, "Trajectory must have at least one point"
+        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
         for x, y in v:
             assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
@@ -455,7 +459,7 @@ class PatternBrushAction(BaseModel):
     @field_validator("trajectory")
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert len(v) >= 1, "Trajectory must have at least one point"
+        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
         for x, y in v:
             assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
@@ -500,7 +504,7 @@ class ForwardWarpAction(BaseModel):
     @field_validator("trajectory")
     @classmethod
     def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert len(v) >= 2, "Forward warp trajectory must have at least 2 points"
+        assert 2 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Forward warp trajectory must have 2-{MAX_TRAJECTORY_POINTS} points"
         for x, y in v:
             assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
         return v
@@ -568,7 +572,8 @@ def _clamp_action_coords_for_model_output(data: dict[str, Any]) -> dict[str, Any
 
 def parse_action(data: dict) -> Action:
     """Deserialize a raw dict into the correct Action subtype."""
-    tool = data.get("action_type")
+    raw_tool = data.get("action_type")
+    tool = _ACTION_TYPE_ALIASES.get(raw_tool, raw_tool)
     dispatch: dict[str, type[Action]] = {
         "brush": BrushAction,
         "pencil": PencilAction,
@@ -584,8 +589,11 @@ def parse_action(data: dict) -> Action:
         "noop": NoopAction,
     }
     if tool not in dispatch:
-        raise ValueError(f"Unknown action_type '{tool}'. Valid: {list(dispatch)}")
-    return dispatch[tool].model_validate(_clamp_action_coords_for_model_output(dict(data)))
+        raise ValueError(f"Unknown action_type '{raw_tool}'. Valid: {list(dispatch)}")
+    normalized = dict(data)
+    if tool != raw_tool:
+        normalized["action_type"] = tool
+    return dispatch[tool].model_validate(_clamp_action_coords_for_model_output(normalized))
 
 
 class ActionChunk(BaseModel):

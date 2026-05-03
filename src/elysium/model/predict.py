@@ -29,9 +29,12 @@ from huggingface_hub.constants import HF_HUB_CACHE
 from PIL import Image
 from unsloth import FastVisionModel
 
+from transformers import StoppingCriteriaList
+
 from elysium.engine.canvas import execute_chunk
 from elysium.log import logger
 from elysium.model.action_io import build_generation_processor_inputs, parse_action_chunk
+from elysium.model.stop_on_json import JsonBalanceStoppingCriteria
 from elysium.schemas.actions import ActionChunk, CANVAS_SIZE
 
 __all__ = ["Predictor", "cached_repo_ids", "ensure_rgb_canvas_size", "model_compute_dtype", "run_inference"]
@@ -139,6 +142,8 @@ class Predictor:
         }
 
         tok = self.processor.tokenizer
+        prompt_len = inputs["input_ids"].shape[1]
+        stop_crit = JsonBalanceStoppingCriteria(tokenizer=tok, prompt_len=prompt_len)
         output_ids = self.model.generate(
             **inputs,
             max_new_tokens=1024,
@@ -147,6 +152,7 @@ class Predictor:
             top_p=0.9 if do_sample else None,
             eos_token_id=tok.eos_token_id,
             pad_token_id=tok.pad_token_id,
+            stopping_criteria=StoppingCriteriaList([stop_crit]),
         )
         generated = output_ids[0][inputs["input_ids"].shape[1]:]
         raw_output = self.processor.decode(generated, skip_special_tokens=True)
