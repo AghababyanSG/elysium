@@ -124,14 +124,16 @@ class Predictor:
 
     @torch.inference_mode()  # type: ignore[misc]
     def _predict_chunk(
-        self, canvas_pil: Image.Image, instruction: str, do_sample: bool = False
+        self, canvas_pil: Image.Image, instruction: str, do_sample: bool = True
     ) -> ActionChunk:
         """Run one model forward pass and parse the output into an ActionChunk.
 
         Args:
             canvas_pil: Current canvas as a PIL image.
             instruction: Natural language editing instruction.
-            do_sample: If True, use temperature sampling instead of greedy decoding.
+            do_sample: If True, use temperature sampling. Default True — greedy
+                decoding is prone to falling into degenerate trajectory loops on
+                a small SFT dataset.
 
         Returns:
             Parsed ActionChunk.
@@ -153,6 +155,7 @@ class Predictor:
             do_sample=do_sample,
             temperature=0.3 if do_sample else None,
             top_p=0.9 if do_sample else None,
+            repetition_penalty=1.15,
             eos_token_id=tok.eos_token_id,
             pad_token_id=tok.pad_token_id,
             stopping_criteria=StoppingCriteriaList([stop_crit]),
