@@ -49,14 +49,15 @@ def run_pipeline(
     paths = DataPaths(root or config_path.parent.parent, cfg)
     epsilon = rdp_epsilon if rdp_epsilon is not None else data_cfg.get("rdp_epsilon", 2.0)
     horizon = data_cfg["action_horizon"]
+    stride = data_cfg.get("chunk_stride", 1)
     train_split = data_cfg["train_split"]
     instr_path = instructions_path or paths.instructions
 
     logger.info("Step 1/3: Compressing sessions (epsilon=%.1f)", epsilon)
     compress_all(paths.sessions, paths.compressed, epsilon=epsilon)
 
-    logger.info("Step 2/3: Chunking (horizon=%d)", horizon)
-    chunk_all(paths.compressed, paths.frames, paths.chunks, horizon=horizon)
+    logger.info("Step 2/3: Chunking (horizon=%d, stride=%d)", horizon, stride)
+    chunk_all(paths.compressed, paths.frames, paths.chunks, horizon=horizon, stride=stride)
 
     logger.info("Step 3/3: Building dataset (train_split=%.2f)", train_split)
     build_dataset(paths.chunks, instr_path, paths.processed, train_split=train_split)

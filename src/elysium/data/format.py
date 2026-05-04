@@ -151,22 +151,24 @@ def build_dataset(
     if not sessions:
         raise ValueError(f"No chunks found in {chunks_dir}. Run prepare_data.py first.")
 
-    records: list[dict[str, Any]] = []
+    session_records: dict[str, list[dict[str, Any]]] = {}
     skipped = 0
     for session_name, chunks in sessions.items():
         instruction = session_to_instruction.get(session_name)
         if instruction is None:
             skipped += len(chunks)
             continue
+        recs: list[dict[str, Any]] = []
         for i, chunk in enumerate(chunks):
             next_frame = (
                 _relative_path(chunks[i + 1]["observation_frame"])
                 if i + 1 < len(chunks)
                 else ""
             )
-            records.append(_to_conversation(chunk, instruction, next_frame))
+            recs.append(_to_conversation(chunk, instruction, next_frame))
+        session_records[session_name] = recs
 
-    if not records:
+    if not session_records:
         raise ValueError(
             "No records produced. Ensure sessions in configs/instructions.yaml match "
             "session names in data/interim/chunks/."
@@ -175,12 +177,13 @@ def build_dataset(
     if skipped:
         logger.warning("Skipped %d chunks from sessions with no instruction mapping", skipped)
 
+    # Split by session so no session's frames appear in both train and val.
     random.seed(seed)
-    random.shuffle(records)
-
-    split_idx = int(len(records) * train_split)
-    train_records = records[:split_idx]
-    val_records = records[split_idx:]
+    session_names = list(session_records.keys())
+    random.shuffle(session_names)
+    split_n = max(1, int(len(session_names) * train_split))
+    train_records = [r for s in session_names[:split_n] for r in session_records[s]]
+    val_records = [r for s in session_names[split_n:] for r in session_records[s]]
 
     dataset = DatasetDict({
         "train": Dataset.from_list(train_records),

@@ -25,8 +25,14 @@ __all__ = ["compress_session", "compress_all"]
 
 logger = logging.getLogger(__name__)
 
-
+# Tools that are grouped into strokes (multi-point trajectories).
 _STROKE_TOOLS = {"brush", "pencil", "eraser", "fill"}
+
+# Tools logged as a single complete operation (already have all data in one entry).
+_ATOMIC_TOOLS = {"scatter_brush", "pattern_brush", "forward_warp", "text_overlay"}
+
+# Tools logged per-dab (one entry per mouse position; treated atomically here).
+_DAB_TOOLS = {"gaussian_blur", "clone_stamp"}
 
 
 def _finalize_stroke(
@@ -46,6 +52,8 @@ def _operations_to_strokes(operations: list[dict[str, Any]]) -> list[dict[str, A
 
     for op in operations:
         tool = op.get("tool")
+
+        # --- atomic / single-entry tools ---
         if tool == "color_adjust":
             if current is not None and last_draw_op is not None:
                 strokes.append(_finalize_stroke(current, last_draw_op))
@@ -53,26 +61,54 @@ def _operations_to_strokes(operations: list[dict[str, Any]]) -> list[dict[str, A
                 last_draw_op = None
             strokes.append({
                 "tool": "color_adjust",
-                "brightness": op["brightness"],
-                "contrast": op["contrast"],
-                "saturation": op["saturation"],
+                "brightness": op.get("brightness", 0),
+                "exposure": op.get("exposure", 0),
+                "contrast": op.get("contrast", 1.0),
+                "highlights": op.get("highlights", 0),
+                "shadows": op.get("shadows", 0),
+                "saturation": op.get("saturation", 1.0),
+                "hue_shift": op.get("hue_shift", 0),
+                "temperature": op.get("temperature", 0),
                 "frame_id": op["frame_id"],
             })
             continue
+
+        if tool in _ATOMIC_TOOLS:
+            if current is not None and last_draw_op is not None:
+                strokes.append(_finalize_stroke(current, last_draw_op))
+                current = None
+                last_draw_op = None
+            strokes.append(dict(op))
+            continue
+
+        if tool in _DAB_TOOLS:
+            if current is not None and last_draw_op is not None:
+                strokes.append(_finalize_stroke(current, last_draw_op))
+                current = None
+                last_draw_op = None
+            strokes.append(dict(op))
+            continue
+
+        if tool in ("undo", "redo", "picker", "clear"):
+            continue
+
         if tool not in _STROKE_TOOLS:
             continue
 
+        # --- stroke-grouping for brush / pencil / eraser / fill ---
         size = op["size"]
-        color = op["color"]
+        color = op.get("color")
+        hardness = op.get("hardness", 100)
         point = op["start_pos"]
         ts = op["timestamp"]
 
         same_tool = current is not None and current["tool"] == tool
-        same_color = current is not None and current["color"] == color
+        same_color = current is not None and current.get("color") == color
         same_size = current is not None and current["size"] == size
+        same_hardness = current is not None and current.get("hardness", 100) == hardness
         no_gap = current is not None and (ts - current["last_ts"]) < 1.0
 
-        if same_tool and same_color and same_size and no_gap:
+        if same_tool and same_color and same_size and same_hardness and no_gap:
             current["trajectory"].append(point)
             current["last_ts"] = ts
             last_draw_op = op
@@ -83,6 +119,7 @@ def _operations_to_strokes(operations: list[dict[str, Any]]) -> list[dict[str, A
                 "tool": tool,
                 "size": size,
                 "color": color,
+                "hardness": hardness,
                 "frame_id": op["frame_id"],
                 "trajectory": [point],
                 "last_ts": ts,
@@ -146,7 +183,7 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
 
     operations: list[dict[str, Any]] = session.get("operations", [])
     image_name: str = session.get("image_name", session_path.stem)
-    canvas_size: int = session.get("canvas_size", 256)
+    canvas_size: int = session.get("canvas_size", 512)
 
     strokes = _operations_to_strokes(operations)
 
@@ -157,9 +194,95 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
         if tool == "color_adjust":
             compressed_strokes.append({
                 "action_type": "color_adjust",
-                "brightness": stroke["brightness"],
-                "contrast": stroke["contrast"],
-                "saturation": stroke["saturation"],
+                "brightness": stroke.get("brightness", 0),
+                "exposure": stroke.get("exposure", 0),
+                "contrast": stroke.get("contrast", 1.0),
+                "highlights": stroke.get("highlights", 0),
+                "shadows": stroke.get("shadows", 0),
+                "saturation": stroke.get("saturation", 1.0),
+                "hue_shift": stroke.get("hue_shift", 0),
+                "temperature": stroke.get("temperature", 0),
+                "frame_id": stroke["frame_id"],
+            })
+            continue
+
+        if tool == "scatter_brush":
+            traj = stroke.get("trajectory", [stroke.get("start_pos", [0, 0])])
+            color = stroke.get("color")
+            compressed_strokes.append({
+                "action_type": "scatter_brush",
+                "color_rgba": _to_rgba(color) if color else [0, 0, 0, 255],
+                "trajectory": _compress_trajectory(traj, epsilon) if len(traj) > 2 else traj,
+                "size": max(1, int(stroke.get("size", 8))),
+                "shape": stroke.get("shape", "circle"),
+                "density": stroke.get("density", 5),
+                "scatter": stroke.get("scatter", 30),
+                "size_jitter": stroke.get("size_jitter", 50),
+                "angle_jitter": stroke.get("angle_jitter", 0),
+                "seed": stroke.get("seed", 0),
+                "thickness": stroke.get("thickness", 1),
+                "length": stroke.get("length", 0),
+                "base_angle": stroke.get("base_angle", -1),
+                "frame_id": stroke["frame_id"],
+            })
+            continue
+
+        if tool == "pattern_brush":
+            traj = stroke.get("trajectory", [stroke.get("start_pos", [0, 0])])
+            color = stroke.get("color")
+            compressed_strokes.append({
+                "action_type": "pattern_brush",
+                "color_rgba": _to_rgba(color) if color else [0, 0, 0, 255],
+                "trajectory": _compress_trajectory(traj, epsilon) if len(traj) > 2 else traj,
+                "size": max(1, int(stroke.get("size", 10))),
+                "shape": stroke.get("shape", "leaf"),
+                "spacing": stroke.get("spacing", 20),
+                "angle_jitter": stroke.get("angle_jitter", 15),
+                "thickness": stroke.get("thickness", 1),
+                "length": stroke.get("length", 0),
+                "frame_id": stroke["frame_id"],
+            })
+            continue
+
+        if tool == "forward_warp":
+            traj = stroke.get("trajectory", [stroke.get("start_pos", [0, 0]), stroke.get("end_pos", [0, 0])])
+            compressed_strokes.append({
+                "action_type": "forward_warp",
+                "trajectory": _compress_trajectory(traj, epsilon) if len(traj) > 2 else traj,
+                "size": max(1, int(stroke.get("size", 20))),
+                "strength": stroke.get("strength", 50),
+                "frame_id": stroke["frame_id"],
+            })
+            continue
+
+        if tool == "text_overlay":
+            color = stroke.get("color")
+            compressed_strokes.append({
+                "action_type": "text_overlay",
+                "text": stroke.get("text", ""),
+                "position": stroke.get("start_pos", [0, 0]),
+                "font_name": stroke.get("font_name", "simplex"),
+                "font_size": float(stroke.get("font_size", 1.0)),
+                "color_rgba": _to_rgba(color) if color else [0, 0, 0, 255],
+                "thickness": stroke.get("thickness", 1),
+                "frame_id": stroke["frame_id"],
+            })
+            continue
+
+        if tool == "gaussian_blur":
+            compressed_strokes.append({
+                "action_type": "gaussian_blur",
+                "radius": max(1, int(stroke.get("size", 5))),
+                "frame_id": stroke["frame_id"],
+            })
+            continue
+
+        if tool == "clone_stamp":
+            compressed_strokes.append({
+                "action_type": "clone_stamp",
+                "source": stroke.get("start_pos", [0, 0]),
+                "destination": stroke.get("end_pos", [0, 0]),
+                "size": max(1, int(stroke.get("size", 10))),
                 "frame_id": stroke["frame_id"],
             })
             continue
@@ -187,11 +310,12 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
                 "trajectory": _compress_trajectory(traj, epsilon),
                 "frame_id": stroke["frame_id"],
             })
-        else:
+        else:  # brush
             compressed_strokes.append({
                 "action_type": "brush",
                 "color_rgba": _to_rgba(stroke["color"]),
                 "stroke_size": max(1, stroke["size"]),
+                "hardness": stroke.get("hardness", 100),
                 "trajectory": _compress_trajectory(traj, epsilon),
                 "frame_id": stroke["frame_id"],
             })
@@ -207,12 +331,11 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
         json.dump(result, f, indent=2)
 
     original_ops = len(operations)
-    compressed_ops = sum(len(s.get("trajectory", [s.get("position", [])])) for s in compressed_strokes)
+    compressed_ops = len(compressed_strokes)
     logger.info(
-        "Compressed %s: %d ops -> %d strokes (%d control points)",
+        "Compressed %s: %d ops -> %d strokes",
         session_path.stem,
         original_ops,
-        len(compressed_strokes),
         compressed_ops,
     )
     return compressed_strokes

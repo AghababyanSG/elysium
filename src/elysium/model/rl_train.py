@@ -104,23 +104,19 @@ def _make_reward_fn(horizon: int) -> Any:
     ) -> list[float]:
         rewards: list[float] = []
         for completion, canvas_pil, gt_path in zip(completions, image, next_image):
-            if not gt_path:
-                rewards.append(0.0)
-                continue
-
             text = completion if isinstance(completion, str) else completion[-1]["content"]
             canvas_np = _image_to_float32(ensure_rgb_canvas_size(canvas_pil))
-            gt_pil = ensure_rgb_canvas_size(Image.open(gt_path).convert("RGB"))
-            gt_np = _image_to_float32(gt_pil)
 
             try:
                 pred_chunk = parse_action_chunk(text, horizon)
             except (JSONDecodeError, KeyError, ValueError, ValidationError, AssertionError):
-                rewards.append(0.0)
+                rewards.append(-1.0)
                 continue
 
             predicted = execute_chunk(canvas_np, pred_chunk, original=canvas_np)
-            rewards.append(visual_reward(predicted, gt_np))
+
+            gt_np = _image_to_float32(ensure_rgb_canvas_size(Image.open(gt_path).convert("RGB"))) if gt_path else None
+            rewards.append(visual_reward(predicted, gt_np, canvas_np))
 
         return rewards
 

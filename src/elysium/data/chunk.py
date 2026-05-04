@@ -41,6 +41,7 @@ def chunk_session(
     frames_dir: Path,
     output_path: Path,
     horizon: int = 5,
+    stride: int = 1,
 ) -> list[dict[str, Any]]:
     """Produce sliding-window chunks from a compressed session.
 
@@ -49,6 +50,8 @@ def chunk_session(
         frames_dir: Directory holding canvas frame JPEGs (data/raw/frames/).
         output_path: Path to write chunks JSON.
         horizon: Number of actions per chunk.
+        stride: Step size between chunk start positions. stride=1 gives maximum
+            overlap; stride=horizon gives non-overlapping chunks.
 
     Returns:
         List of chunk dicts, each with `observation_frame` and `actions`.
@@ -69,7 +72,7 @@ def chunk_session(
     chunks: list[dict[str, Any]] = []
     n = len(actions)
 
-    for i in range(n):
+    for i in range(0, n, stride):
         window = actions[i : i + horizon]
         if len(window) < horizon:
             window = window + [_NOOP] * (horizon - len(window))
@@ -90,14 +93,15 @@ def chunk_session(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w") as f:
-        json.dump({"session": session, "horizon": horizon, "chunks": chunks}, f, indent=2)
+        json.dump({"session": session, "horizon": horizon, "stride": stride, "chunks": chunks}, f, indent=2)
 
     logger.info(
-        "Chunked %s: %d strokes -> %d chunks (horizon=%d)",
+        "Chunked %s: %d strokes -> %d chunks (horizon=%d, stride=%d)",
         session,
         n,
         len(chunks),
         horizon,
+        stride,
     )
     return chunks
 
@@ -107,6 +111,7 @@ def chunk_all(
     frames_dir: Path,
     output_dir: Path,
     horizon: int = 5,
+    stride: int = 1,
 ) -> dict[str, list[dict[str, Any]]]:
     """Chunk all compressed sessions in a directory.
 
@@ -115,6 +120,7 @@ def chunk_all(
         frames_dir: Directory holding canvas frame JPEGs.
         output_dir: Directory to write chunk JSONs.
         horizon: Number of actions per chunk.
+        stride: Step between chunk start positions.
 
     Returns:
         Mapping of session name -> list of chunk dicts.
@@ -127,7 +133,7 @@ def chunk_all(
     results: dict[str, list[dict[str, Any]]] = {}
     for cp in compressed_files:
         out_path = output_dir / cp.name
-        chunks = chunk_session(cp, frames_dir, out_path, horizon=horizon)
+        chunks = chunk_session(cp, frames_dir, out_path, horizon=horizon, stride=stride)
         results[cp.stem] = chunks
 
     total = sum(len(v) for v in results.values())

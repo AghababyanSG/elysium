@@ -15,9 +15,14 @@ src/elysium/data/pipeline.py
 src/elysium/engine/__init__.py
 src/elysium/engine/canvas.py
 src/elysium/model/__init__.py
+src/elysium/model/action_io.py
 src/elysium/model/predict.py
 src/elysium/model/reward.py
 src/elysium/model/rl_train.py
+src/elysium/model/stop_on_json.py
 src/elysium/model/train.py
 src/elysium/schemas/__init__.py
 src/elysium/schemas/actions.py
+tests/test_action_coord_clamp.py
+tests/test_action_io.py
+tests/test_rl_train_reward_import.py

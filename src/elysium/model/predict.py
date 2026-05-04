@@ -161,7 +161,11 @@ class Predictor:
         raw_output = self.processor.decode(generated, skip_special_tokens=True)
 
         logger.debug("Raw model output: {}", raw_output[:500])
-        return parse_action_chunk(raw_output, self.horizon)
+        try:
+            return parse_action_chunk(raw_output, self.horizon)
+        except Exception as exc:
+            logger.warning("Failed to parse model output ({}): {} — using noop chunk", type(exc).__name__, exc)
+            return ActionChunk.noop_chunk(self.horizon)
 
     def run(
         self,

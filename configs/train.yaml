@@ -1,5 +1,5 @@
 model:
-  name: "Qwen/Qwen3.5-4B"
+  name: "Qwen/Qwen3.5-0.8B"
   load_in_4bit: true
 
 lora:
@@ -17,7 +17,7 @@ training:
   batch_size: 2
   gradient_accumulation_steps: 4
   learning_rate: 2.0e-4
-  epochs: 5
+  epochs: 20
   optimizer: "adamw_8bit"
   gradient_checkpointing: "unsloth"
   max_seq_length: 2048
@@ -29,6 +29,7 @@ data:
   action_horizon: 5
   rdp_epsilon: 2.0
   train_split: 0.8
+  chunk_stride: 2
   dataset_path: "data/processed"
   instructions: "configs/instructions.yaml"
   checkpoint_dir: "models/checkpoints"
@@ -42,7 +43,7 @@ data:
 inference:
   max_chunks: 100
   ensemble_execute_k: 1
-  max_new_tokens: 4096
+  max_new_tokens: 2048
 
 rl:
   enabled: true
@@ -55,7 +56,7 @@ rl:
   top_p: 0.9
   beta: 0.1
   max_prompt_length: 2048
-  max_completion_length: 1024
+  max_completion_length: 2048
   save_steps: 50
   warmup_sft_first: true
   max_grad_norm: 0.1
