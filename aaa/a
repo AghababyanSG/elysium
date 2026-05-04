@@ -1,0 +1,5 @@
+ mkdir -p post
+for f in *.jpg *.jpeg *.avif *.webp *.png; do
+  [ -f "$f" ] && convert "$f" -resize 512x512^ -gravity Center -extent 512x512 "post/${f%.*}.jpg"
+done
+

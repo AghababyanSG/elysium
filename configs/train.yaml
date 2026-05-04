@@ -14,22 +14,22 @@ lora:
   bias: "none"
 
 training:
-  batch_size: 2
+  batch_size: 1
   gradient_accumulation_steps: 4
   learning_rate: 2.0e-4
-  epochs: 20
+  epochs: 30
   optimizer: "adamw_8bit"
   gradient_checkpointing: "unsloth"
   max_seq_length: 2048
   warmup_steps: 5
   logging_steps: 10
-  save_steps: 50
+  save_steps: 25
 
 data:
   action_horizon: 5
   rdp_epsilon: 2.0
   train_split: 0.8
-  chunk_stride: 2
+  chunk_stride: 1
   dataset_path: "data/processed"
   instructions: "configs/instructions.yaml"
   checkpoint_dir: "models/checkpoints"
@@ -41,12 +41,12 @@ data:
     chunks: "data/interim/chunks"
 
 inference:
-  max_chunks: 100
+  max_chunks: 30
   ensemble_execute_k: 1
-  max_new_tokens: 2048
+  max_new_tokens: 4096
 
 rl:
-  enabled: true
+  enabled: false
   epochs: 3
   learning_rate: 1.0e-6
   per_device_batch_size: 1

@@ -177,13 +177,16 @@ def build_dataset(
     if skipped:
         logger.warning("Skipped %d chunks from sessions with no instruction mapping", skipped)
 
-    # Split by session so no session's frames appear in both train and val.
+    # Chunk-level split: shuffle all chunks across sessions so val measures
+    # whether the model is fitting the seen instructions, not generalising to
+    # entirely held-out tasks (we have ~one session per task — too few to hold
+    # whole sessions out meaningfully).
+    all_records = [r for recs in session_records.values() for r in recs]
     random.seed(seed)
-    session_names = list(session_records.keys())
-    random.shuffle(session_names)
-    split_n = max(1, int(len(session_names) * train_split))
-    train_records = [r for s in session_names[:split_n] for r in session_records[s]]
-    val_records = [r for s in session_names[split_n:] for r in session_records[s]]
+    random.shuffle(all_records)
+    split_n = max(1, int(len(all_records) * train_split))
+    train_records = all_records[:split_n]
+    val_records = all_records[split_n:]
 
     dataset = DatasetDict({
         "train": Dataset.from_list(train_records),

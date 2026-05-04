@@ -1,0 +1,47 @@
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+Traceback (most recent call last):
+  File "/home/spartak/Desktop/elysium/scripts/train.py", line 20, in <module>
+    from elysium.model.train import run_training
+  File "/home/spartak/Desktop/elysium/src/elysium/model/train.py", line 23, in <module>
+    from unsloth import FastVisionModel
+  File "/home/spartak/.local/lib/python3.12/site-packages/unsloth/__init__.py", line 105, in <module>
+Traceback (most recent call last):
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py", line 47, in <module>
+    main()
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/_inductor/compile_worker/__main__.py", line 38, in main
+    pre_fork_setup()
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/_inductor/async_compile.py", line 62, in pre_fork_setup
+    triton_key()
+  File "/home/spartak/.local/lib/python3.12/site-packages/triton/compiler/compiler.py", line 159, in triton_key
+    libtriton_hash.update(chunk)
+    import unsloth_zoo
+KeyboardInterrupt
+  File "/home/spartak/.local/lib/python3.12/site-packages/unsloth_zoo/__init__.py", line 289, in <module>
+    from .temporary_patches import (
+  File "/home/spartak/.local/lib/python3.12/site-packages/unsloth_zoo/temporary_patches/__init__.py", line 23, in <module>
+    from .gpt_oss import *
+  File "/home/spartak/.local/lib/python3.12/site-packages/unsloth_zoo/temporary_patches/gpt_oss.py", line 1141, in <module>
+    device_memory = torch.cuda.memory.mem_get_info(0)[-1]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/cuda/memory.py", line 738, in mem_get_info
+    return torch.cuda.cudart().cudaMemGetInfo(device)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/cuda/__init__.py", line 396, in cudart
+    _lazy_init()
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/cuda/__init__.py", line 330, in _lazy_init
+    queued_call()
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/cuda/__init__.py", line 199, in _check_capability
+    for d in range(device_count()):
+                   ^^^^^^^^^^^^^^
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/cuda/__init__.py", line 935, in device_count
+    nvml_count = _device_count_amdsmi() if torch.version.hip else _device_count_nvml()
+                                                                  ^^^^^^^^^^^^^^^^^^^^
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/cuda/__init__.py", line 891, in _device_count_nvml
+    raw_cnt = _raw_device_count_nvml()
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/spartak/.local/lib/python3.12/site-packages/torch/cuda/__init__.py", line 731, in _raw_device_count_nvml
+    nvml_h = CDLL("libnvidia-ml.so.1")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/ctypes/__init__.py", line 373, in __init__
+    class _FuncPtr(_CFuncPtr):
+KeyboardInterrupt
