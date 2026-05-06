@@ -11,6 +11,7 @@ Output: models/checkpoints/
 
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +23,11 @@ import torch
 import yaml
 from unsloth import FastVisionModel
 from datasets import load_from_disk
+from transformers import EarlyStoppingCallback
 from trl import SFTConfig, SFTTrainer
 
 from elysium.log import logger
-from elysium.model.predict import cached_repo_ids, ensure_rgb_canvas_size
+from elysium.model.predict import apply_image_pixel_budget, cached_repo_ids, ensure_rgb_canvas_size
 from unsloth_zoo.vision_utils import UnslothVisionDataCollator
 
 __all__ = ["run_training"]
@@ -123,6 +125,8 @@ def run_training(
         local_files_only=local_only,
     )
 
+    apply_image_pixel_budget(tokenizer, model_cfg)
+
     model = FastVisionModel.get_peft_model(
         model,
         finetune_vision_layers=lora_cfg["finetune_vision_layers"],
@@ -147,9 +151,16 @@ def run_training(
     checkpoint_dir = Path(data_cfg["checkpoint_dir"])
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    tb_root = Path(train_cfg.get("tensorboard_dir", "logs/tensorboard"))
+    run_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = tb_root / f"sft_{run_tag}"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("TensorBoard logs → {}", log_dir)
+
     sft_config = SFTConfig(
         output_dir=str(checkpoint_dir),
         per_device_train_batch_size=train_cfg["batch_size"],
+        per_device_eval_batch_size=train_cfg.get("eval_batch_size", train_cfg["batch_size"]),
         gradient_accumulation_steps=train_cfg["gradient_accumulation_steps"],
         learning_rate=train_cfg["learning_rate"],
         num_train_epochs=train_cfg["epochs"],
@@ -157,10 +168,18 @@ def run_training(
         max_length=train_cfg["max_seq_length"],
         warmup_steps=train_cfg["warmup_steps"],
         logging_steps=train_cfg["logging_steps"],
-        save_steps=train_cfg["save_steps"],
+        weight_decay=train_cfg.get("weight_decay", 0.0),
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        dataloader_num_workers=int(train_cfg.get("dataloader_num_workers", 0)),
+        dataloader_pin_memory=bool(train_cfg.get("dataloader_pin_memory", True)),
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
-        report_to="none",
+        report_to="tensorboard",
+        logging_dir=str(log_dir),
         remove_unused_columns=False,
         dataset_text_field="",
         dataset_kwargs={"skip_prepare_dataset": True},
@@ -172,6 +191,9 @@ def run_training(
         max_seq_length=train_cfg["max_seq_length"],
     )
 
+    early_stopping_patience = int(train_cfg.get("early_stopping_patience", 2))
+    early_stopping_threshold = float(train_cfg.get("early_stopping_threshold", 0.001))
+
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
@@ -179,6 +201,12 @@ def run_training(
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         args=sft_config,
+        callbacks=[
+            EarlyStoppingCallback(
+                early_stopping_patience=early_stopping_patience,
+                early_stopping_threshold=early_stopping_threshold,
+            ),
+        ],
     )
 
     logger.info("Starting training")

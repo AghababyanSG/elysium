@@ -4,7 +4,8 @@ import json
 from itertools import takewhile
 from typing import Any
 
-from elysium.schemas.actions import ActionChunk, SYSTEM_PROMPT
+from elysium.log import logger
+from elysium.schemas.actions import ActionChunk, NoopAction, build_system_prompt, parse_action
 
 __all__ = [
     "CHAT_TEMPLATE_KWARGS",
@@ -23,11 +24,11 @@ __all__ = [
 CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
 
 
-def action_conversation_messages(instruction: str) -> list[dict[str, Any]]:
+def action_conversation_messages(instruction: str, horizon: int) -> list[dict[str, Any]]:
     return [
         {
             "role": "system",
-            "content": [{"type": "text", "text": SYSTEM_PROMPT}],
+            "content": [{"type": "text", "text": build_system_prompt(horizon)}],
         },
         {
             "role": "user",
@@ -81,8 +82,9 @@ def build_generation_processor_inputs(
     processor: Any,
     canvas_pil: Any,
     instruction: str,
+    horizon: int,
 ) -> dict[str, Any]:
-    messages = action_conversation_messages(instruction)
+    messages = action_conversation_messages(instruction, horizon)
     text = apply_action_chat_template(
         processor,
         messages,
@@ -171,4 +173,27 @@ def extract_action_json(raw: str) -> str:
 
 
 def parse_action_chunk(raw_output: str, horizon: int) -> ActionChunk:
-    return ActionChunk.from_json_str(extract_action_json(raw_output), horizon=horizon)
+    """Parse a model-generated chunk, skipping individual malformed actions.
+
+    Each action is validated independently; if one fails (e.g. junk in a point
+    like ``[446,32dr]``), that action is dropped with a warning and the rest
+    are kept. Raises ``ValueError`` if every action fails validation or if the
+    ``actions`` list is empty -- silently returning a noop chunk would let the
+    RL reward function score a malformed generation as a clean completion.
+    """
+    blob = extract_action_json(raw_output)
+    raw = json.loads(blob)
+    raw_actions = raw.get("actions") or []
+    parsed = []
+    for i, item in enumerate(raw_actions):
+        try:
+            parsed.append(parse_action(item))
+        except (ValueError, TypeError, AssertionError) as exc:
+            logger.warning(
+                "Skipping invalid action {} ({}): {}", i, type(exc).__name__, exc
+            )
+    if not parsed:
+        raise ValueError(
+            f"All {len(raw_actions)} actions in chunk failed validation (or list was empty)"
+        )
+    return ActionChunk(actions=parsed, horizon=horizon)

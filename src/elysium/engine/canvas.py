@@ -403,7 +403,7 @@ def _execute_scatter_brush(canvas: np.ndarray, action: ScatterBrushAction) -> np
     h, w = canvas.shape[:2]
     coverage = np.zeros((h, w), dtype=np.float32)
     rng = np.random.default_rng(action.seed)
-    pts = _bezier_points([(p[0], p[1]) for p in action.trajectory])
+    pts = _bezier_points([tuple(action.start_point), tuple(action.end_point)])
     sample_step = max(1, _BEZIER_STEPS // 10)
     sampled = pts[::sample_step]
     for si, (x, y) in enumerate(sampled):
@@ -447,7 +447,7 @@ def _execute_pattern_brush(canvas: np.ndarray, action: PatternBrushAction) -> np
     h, w = canvas.shape[:2]
     coverage = np.zeros((h, w), dtype=np.float32)
     rng = np.random.default_rng(0)
-    pts = _bezier_points([(p[0], p[1]) for p in action.trajectory])
+    pts = _bezier_points([tuple(action.start_point), tuple(action.end_point)])
     stamp = draw_shape_mask(
         h,
         w,
@@ -519,7 +519,7 @@ def _blend_rgba_on_rgb01(rgb: np.ndarray, coverage: np.ndarray, rgba: tuple[int,
 
 def _execute_forward_warp(canvas: np.ndarray, action: ForwardWarpAction) -> np.ndarray:
     h, w = canvas.shape[:2]
-    pts = _bezier_points([(p[0], p[1]) for p in action.trajectory])
+    pts = _bezier_points([tuple(action.start_point), tuple(action.end_point)])
 
     xs = np.arange(w, dtype=np.float32)
     ys = np.arange(h, dtype=np.float32)
@@ -583,11 +583,13 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
     base = canvas.astype(np.float32).copy()
 
     if isinstance(action, BrushAction):
-        cov = _brush_stroke_coverage_mask(h, w, action.trajectory, action.stroke_size, action.hardness)
+        seg = [list(action.start_point), list(action.end_point)]
+        cov = _brush_stroke_coverage_mask(h, w, seg, action.stroke_size, action.hardness)
         return _blend_rgba_on_rgb01(base, cov, action.color_rgba)
 
     if isinstance(action, PencilAction):
-        cov = _stroke_coverage_mask(h, w, action.trajectory, thickness=1)
+        seg = [list(action.start_point), list(action.end_point)]
+        cov = _stroke_coverage_mask(h, w, seg, thickness=1)
         return _blend_rgba_on_rgb01(base, cov, action.color_rgba)
 
     if isinstance(action, EraserAction):
@@ -596,7 +598,7 @@ def execute_action(canvas: np.ndarray, action: Action, original: np.ndarray | No
             logger.warning("Eraser called without original image; skipping")
             return canvas.copy()
         orig_bgr = _to_bgr_uint8(original)
-        pts = [(p[0], p[1]) for p in action.trajectory]
+        pts = [tuple(action.start_point), tuple(action.end_point)]
         smooth = _bezier_points(pts)
         mask = np.zeros(img_bgr.shape[:2], dtype=np.uint8)
         eraser_thickness = max(1, 2 * action.stroke_size)

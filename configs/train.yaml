@@ -1,5 +1,5 @@
 model:
-  name: "Qwen/Qwen3.5-0.8B"
+  name: "Qwen/Qwen3.5-4B"
   load_in_4bit: true
 
 lora:
@@ -10,23 +10,29 @@ lora:
   finetune_language_layers: true
   finetune_attention_modules: true
   finetune_mlp_modules: true
-  lora_dropout: 0
+  lora_dropout: 0.05
   bias: "none"
 
 training:
-  batch_size: 1
-  gradient_accumulation_steps: 4
-  learning_rate: 2.0e-4
-  epochs: 30
+  batch_size: 4
+  eval_batch_size: 4
+  gradient_accumulation_steps: 16
+  learning_rate: 1.0e-4
+  epochs: 12
   optimizer: "adamw_8bit"
   gradient_checkpointing: "unsloth"
-  max_seq_length: 2048
-  warmup_steps: 5
+  max_seq_length: 768
+  warmup_steps: 50
   logging_steps: 10
-  save_steps: 25
+  weight_decay: 0.01
+  early_stopping_patience: 2
+  early_stopping_threshold: 0.001
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  tensorboard_dir: "logs/tensorboard"
 
 data:
-  action_horizon: 5
+  action_horizon: 2
   rdp_epsilon: 2.0
   train_split: 0.8
   chunk_stride: 1
@@ -41,23 +47,26 @@ data:
     chunks: "data/interim/chunks"
 
 inference:
-  max_chunks: 30
-  ensemble_execute_k: 1
-  max_new_tokens: 4096
+  max_chunks: 200
+  ensemble_execute_k: 2
+  max_new_tokens: 256
 
 rl:
-  enabled: false
+  enabled: true
   epochs: 3
-  learning_rate: 1.0e-6
+  learning_rate: 5.0e-6
   per_device_batch_size: 1
-  gradient_accumulation_steps: 8
-  num_generations: 4
-  temperature: 0.7
-  top_p: 0.9
-  beta: 0.1
-  max_prompt_length: 2048
-  max_completion_length: 2048
-  save_steps: 50
+  gradient_accumulation_steps: 4
+  num_generations: 8
+  temperature: 1.0
+  top_p: 1.0
+  beta: 0.02
+  repetition_penalty: 1.0
+  max_prompt_length: 768
+  max_completion_length: 256
+  max_steps: 400
+  save_steps: 100
+  save_total_limit: 3
   warmup_sft_first: true
   max_grad_norm: 0.1
   warmup_ratio: 0.1

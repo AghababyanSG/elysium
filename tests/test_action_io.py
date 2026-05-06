@@ -83,6 +83,30 @@ class TestParseActionChunk(unittest.TestCase):
         self.assertEqual(len(chunk.actions), 5)
         self.assertTrue(all(a.action_type == "noop" for a in chunk.actions))
 
+    def test_skips_action_with_invalid_point(self) -> None:
+        good = '{"action_type":"noop"}'
+        bad = (
+            '{"action_type":"brush","color_rgba":[0,0,0,255],"stroke_size":5,'
+            '"hardness":100,"start_point":[10,"bad"],"end_point":[20,20]}'
+        )
+        raw = '{"actions":[' + good + "," + bad + "," + good + "]}"
+        chunk = parse_action_chunk(raw, 5)
+        self.assertEqual(len(chunk.actions), 2)
+        self.assertTrue(all(a.action_type == "noop" for a in chunk.actions))
+
+    def test_all_invalid_actions_raises(self) -> None:
+        bad = (
+            '{"action_type":"brush","color_rgba":[0,0,0,255],"stroke_size":5,'
+            '"hardness":100,"start_point":[10,"bad"],"end_point":[20,20]}'
+        )
+        raw = '{"actions":[' + bad + "," + bad + "]}"
+        with self.assertRaises(ValueError):
+            parse_action_chunk(raw, 5)
+
+    def test_empty_actions_list_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_action_chunk('{"actions":[]}', 5)
+
 
 if __name__ == "__main__":
     unittest.main()

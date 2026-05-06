@@ -7,7 +7,6 @@ from pydantic import BaseModel, field_validator, model_validator
 
 __all__ = [
     "CANVAS_SIZE",
-    "MAX_TRAJECTORY_POINTS",
     "BrushAction",
     "PencilAction",
     "EraserAction",
@@ -22,83 +21,82 @@ __all__ = [
     "NoopAction",
     "Action",
     "ActionChunk",
-    "SYSTEM_PROMPT",
+    "build_system_prompt",
 ]
 
-CANVAS_SIZE = 512
-MAX_TRAJECTORY_POINTS = 64
+CANVAS_SIZE = 256
 
 _STAMP_SHAPES = {"circle", "leaf", "star", "triangle", "dash"}
 
 _ACTION_TYPE_ALIASES: dict[str, str] = {"blur": "gaussian_blur"}
 
-_SYSTEM_PROMPT_COORD = f"0-{CANVAS_SIZE - 1}"
-SYSTEM_PROMPT = (
-    "You are a canvas drawing assistant. "
-    "Given an image of a canvas and a user instruction, respond with ONLY a JSON object "
-    "specifying exactly 5 sequential drawing actions to apply to the canvas. "
-    "Do not explain, describe, or add any text outside the JSON.\n\n"
-    "Output format:\n"
-    '{"actions":[{...},{...},{...},{...},{...}]}\n\n'
-    "Available action types and their required fields:\n"
-    '- "brush": color_rgba ([R,G,B,A] ints 0-255), stroke_size (int 1-50), '
-    "hardness (int 0-100, 0 = invisible, 100 = hard edge like a stamp), "
-    f"trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points)\n"
-    f'- "pencil": color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points)\n'
-    f'- "eraser": stroke_size (int 1-50), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points)\n'
-    f'- "fill": color_rgba ([R,G,B,A] ints 0-255), position ([x,y] pixel coords {_SYSTEM_PROMPT_COORD})\n'
-    "- \"color_adjust\": brightness (int -100 to 100), contrast (float 0.5-2.0), "
-    "saturation (float 0.0-2.0), exposure (int -100 to 100, default 0), "
-    "highlights (int -100 to 100, default 0), shadows (int -100 to 100, default 0), "
-    "hue_shift (int -180 to 180, default 0), temperature (int -100 to 100, default 0)\n"
-    "- \"noop\": no additional fields — use when no more drawing is needed\n"
-    f'- "text_overlay": text (str), position ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), '
-    "font_name (str, one of: simplex, duplex, complex, triplex, script; default simplex), "
-    "font_size (float 0.2-5.0, default 1.0), color_rgba ([R,G,B,A] ints 0-255), "
-    "thickness (int 1-10, default 1)\n"
-    "- \"gaussian_blur\": radius (int 1-31, kernel = 2*radius+1; default 5)\n"
-    f'- "clone_stamp": source ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), destination ([x,y] pixel coords {_SYSTEM_PROMPT_COORD}), '
-    "size (int 1-50 radius in pixels; default 10)\n"
-    '- "scatter_brush": shape (str, one of: circle, leaf, star, triangle, dash; default circle), '
-    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points), "
-    "size (int 1-50 base stamp size; default 8), density (int 1-20 stamps per step; default 5), "
-    "scatter (int 0-100 scatter distance percent; default 30), "
-    "size_jitter (int 0-100 size variation percent; default 50), "
-    "angle_jitter (int 0-360: for shape dash, max degrees added to stroke tangent; 0 = follow stroke; "
-    "for other shapes, max rotation in [0,angle_jitter] or full 360 if 0; default 0), seed (int; default 0), "
-    "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0), "
-    "base_angle (int -1 or 0-360; -1 = align dash to stroke tangent; else fixed base degrees; default -1)\n"
-    '- "pattern_brush": shape (str, one of: circle, leaf, star, triangle, dash; default leaf), '
-    f"color_rgba ([R,G,B,A] ints 0-255), trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, max {MAX_TRAJECTORY_POINTS} points), "
-    "size (int 1-50 stamp size; default 10), spacing (int 5-100 pixels between stamps; default 20), "
-    "angle_jitter (int 0-90 rotation variation per stamp; default 15), "
-    "thickness (int 1-10 dash line width; default 1), length (int 0-100 dash half-length override; 0 = use size; default 0)\n"
-    f'- "forward_warp": trajectory ([[x,y],...] pixel coords {_SYSTEM_PROMPT_COORD}, min 2, max {MAX_TRAJECTORY_POINTS} points), '
-    "size (int 1-100 brush radius in pixels; default 20), strength (int 1-100 push intensity percent; default 50)\n\n"
-    "Respond with valid JSON only."
-)
+def build_system_prompt(horizon: int) -> str:
+    assert horizon >= 1, f"horizon must be >= 1, got {horizon}"
+    return (
+        "You are a canvas drawing assistant. Output ONLY a JSON object with exactly "
+        f"{horizon} drawing actions: "
+        '{"actions":[{"action_type":"...",...},...]}\n'
+        "Available action_type: brush, pencil, eraser, fill, color_adjust, text_overlay, "
+        "gaussian_blur, clone_stamp, scatter_brush, pattern_brush, forward_warp, noop.\n"
+        f"Coordinates are integers in [0, {CANVAS_SIZE - 1}]. Path actions draw a segment "
+        "from start_point to end_point.\n"
+        "Respond with valid JSON only."
+    )
+
+
+def _legacy_trajectory_to_endpoints(data: Any) -> Any:
+    """If a legacy 'trajectory' list is present and start/end aren't, derive endpoints.
+
+    Lets old checkpoints (trained before the segment refactor) still be parsed
+    by treating the first and last trajectory points as the segment endpoints.
+    Derived endpoints are clamped to canvas bounds so they pass validation.
+    """
+    if not isinstance(data, dict):
+        return data
+    if "start_point" in data and "end_point" in data:
+        return data
+    traj = data.get("trajectory")
+    if not isinstance(traj, (list, tuple)) or len(traj) < 1:
+        return data
+    new_data = {k: v for k, v in data.items() if k != "trajectory"}
+    if "start_point" not in new_data:
+        new_data["start_point"] = list(_clamp_canvas_point(traj[0]))
+    if "end_point" not in new_data:
+        last = traj[-1] if len(traj) >= 2 else traj[0]
+        new_data["end_point"] = list(_clamp_canvas_point(last))
+    return new_data
+
+
+def _legacy_color_rgb_to_rgba(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
+    if "color_rgba" in data or "color_rgb" not in data:
+        return data
+    cr = data["color_rgb"]
+    if not isinstance(cr, (list, tuple)) or len(cr) not in (3, 4):
+        return data
+    new_data = {k: v for k, v in data.items() if k != "color_rgb"}
+    if len(cr) == 3:
+        new_data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
+    else:
+        new_data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), int(cr[3]))
+    return new_data
+
 
 class BrushAction(BaseModel):
     action_type: Literal["brush"]
     color_rgba: tuple[int, int, int, int]
     stroke_size: int
-    trajectory: list[tuple[int, int]]
+    start_point: tuple[int, int]
+    end_point: tuple[int, int]
     hardness: int = 100
 
     @model_validator(mode="before")
     @classmethod
-    def _legacy_color_rgb(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        if "color_rgba" not in data and "color_rgb" in data:
-            cr = data["color_rgb"]
-            if isinstance(cr, (list, tuple)) and len(cr) in (3, 4):
-                data = {k: v for k, v in data.items() if k != "color_rgb"}
-                if len(cr) == 3:
-                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
-                else:
-                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), int(cr[3]))
-        if "hardness" not in data:
+    def _normalize(cls, data: Any) -> Any:
+        data = _legacy_color_rgb_to_rgba(data)
+        data = _legacy_trajectory_to_endpoints(data)
+        if isinstance(data, dict) and "hardness" not in data:
             data = {**data, "hardness": 100}
         return data
 
@@ -120,31 +118,25 @@ class BrushAction(BaseModel):
         assert 0 <= v <= 100, "Hardness must be in [0, 100]"
         return v
 
-    @field_validator("trajectory")
+    @field_validator("start_point", "end_point")
     @classmethod
-    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
-        for x, y in v:
-            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+    def _validate_point(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Point ({x},{y}) out of canvas bounds"
         return v
 
 
 class PencilAction(BaseModel):
     action_type: Literal["pencil"]
     color_rgba: tuple[int, int, int, int]
-    trajectory: list[tuple[int, int]]
+    start_point: tuple[int, int]
+    end_point: tuple[int, int]
 
     @model_validator(mode="before")
     @classmethod
-    def _legacy_color_rgb(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
-            cr = data["color_rgb"]
-            if isinstance(cr, (list, tuple)) and len(cr) in (3, 4):
-                data = {k: v for k, v in data.items() if k != "color_rgb"}
-                if len(cr) == 3:
-                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
-                else:
-                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), int(cr[3]))
+    def _normalize(cls, data: Any) -> Any:
+        data = _legacy_color_rgb_to_rgba(data)
+        data = _legacy_trajectory_to_endpoints(data)
         return data
 
     @field_validator("color_rgba")
@@ -153,19 +145,24 @@ class PencilAction(BaseModel):
         assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
         return v
 
-    @field_validator("trajectory")
+    @field_validator("start_point", "end_point")
     @classmethod
-    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
-        for x, y in v:
-            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+    def _validate_point(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Point ({x},{y}) out of canvas bounds"
         return v
 
 
 class EraserAction(BaseModel):
     action_type: Literal["eraser"]
     stroke_size: int
-    trajectory: list[tuple[int, int]]
+    start_point: tuple[int, int]
+    end_point: tuple[int, int]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        return _legacy_trajectory_to_endpoints(data)
 
     @field_validator("stroke_size")
     @classmethod
@@ -173,12 +170,11 @@ class EraserAction(BaseModel):
         assert 1 <= v <= 50, "Stroke size must be in [1, 50]"
         return v
 
-    @field_validator("trajectory")
+    @field_validator("start_point", "end_point")
     @classmethod
-    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
-        for x, y in v:
-            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+    def _validate_point(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Point ({x},{y}) out of canvas bounds"
         return v
 
 
@@ -189,16 +185,8 @@ class FillAction(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _legacy_color_rgb(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "color_rgba" not in data and "color_rgb" in data:
-            cr = data["color_rgb"]
-            if isinstance(cr, (list, tuple)) and len(cr) in (3, 4):
-                data = {k: v for k, v in data.items() if k != "color_rgb"}
-                if len(cr) == 3:
-                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), 255)
-                else:
-                    data["color_rgba"] = (int(cr[0]), int(cr[1]), int(cr[2]), int(cr[3]))
-        return data
+    def _normalize(cls, data: Any) -> Any:
+        return _legacy_color_rgb_to_rgba(data)
 
     @field_validator("color_rgba")
     @classmethod
@@ -353,7 +341,8 @@ class ScatterBrushAction(BaseModel):
     action_type: Literal["scatter_brush"]
     shape: str = "circle"
     color_rgba: tuple[int, int, int, int]
-    trajectory: list[tuple[int, int]]
+    start_point: tuple[int, int]
+    end_point: tuple[int, int]
     size: int = 8
     density: int = 5
     scatter: int = 30
@@ -363,6 +352,11 @@ class ScatterBrushAction(BaseModel):
     thickness: int = 1
     length: int = 0
     base_angle: int = -1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        return _legacy_trajectory_to_endpoints(data)
 
     @field_validator("shape")
     @classmethod
@@ -376,12 +370,11 @@ class ScatterBrushAction(BaseModel):
         assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
         return v
 
-    @field_validator("trajectory")
+    @field_validator("start_point", "end_point")
     @classmethod
-    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
-        for x, y in v:
-            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+    def _validate_point(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Point ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("size")
@@ -437,12 +430,18 @@ class PatternBrushAction(BaseModel):
     action_type: Literal["pattern_brush"]
     shape: str = "leaf"
     color_rgba: tuple[int, int, int, int]
-    trajectory: list[tuple[int, int]]
+    start_point: tuple[int, int]
+    end_point: tuple[int, int]
     size: int = 10
     spacing: int = 20
     angle_jitter: int = 15
     thickness: int = 1
     length: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        return _legacy_trajectory_to_endpoints(data)
 
     @field_validator("shape")
     @classmethod
@@ -456,12 +455,11 @@ class PatternBrushAction(BaseModel):
         assert all(0 <= c <= 255 for c in v), "Color channels must be in [0, 255]"
         return v
 
-    @field_validator("trajectory")
+    @field_validator("start_point", "end_point")
     @classmethod
-    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert 1 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Trajectory must have 1-{MAX_TRAJECTORY_POINTS} points"
-        for x, y in v:
-            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+    def _validate_point(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Point ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("size")
@@ -497,16 +495,21 @@ class PatternBrushAction(BaseModel):
 
 class ForwardWarpAction(BaseModel):
     action_type: Literal["forward_warp"]
-    trajectory: list[tuple[int, int]]
+    start_point: tuple[int, int]
+    end_point: tuple[int, int]
     size: int = 20
     strength: int = 50
 
-    @field_validator("trajectory")
+    @model_validator(mode="before")
     @classmethod
-    def _validate_trajectory(cls, v: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        assert 2 <= len(v) <= MAX_TRAJECTORY_POINTS, f"Forward warp trajectory must have 2-{MAX_TRAJECTORY_POINTS} points"
-        for x, y in v:
-            assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Coordinate ({x},{y}) out of canvas bounds"
+    def _normalize(cls, data: Any) -> Any:
+        return _legacy_trajectory_to_endpoints(data)
+
+    @field_validator("start_point", "end_point")
+    @classmethod
+    def _validate_point(cls, v: tuple[int, int]) -> tuple[int, int]:
+        x, y = v
+        assert 0 <= x < CANVAS_SIZE and 0 <= y < CANVAS_SIZE, f"Point ({x},{y}) out of canvas bounds"
         return v
 
     @field_validator("size")
@@ -557,19 +560,12 @@ def _clamp_canvas_point(pt: Any) -> tuple[int, int]:
     return (_clamp_canvas_scalar(pt[0]), _clamp_canvas_scalar(pt[1]))
 
 
+_POINT_KEYS = ("position", "source", "destination", "start_point", "end_point")
+
+
 def _clamp_action_coords_for_model_output(data: dict[str, Any]) -> dict[str, Any]:
     out = dict(data)
-    tr = out.get("trajectory")
-    if isinstance(tr, list):
-        clamped = [_clamp_canvas_point(p) for p in tr]
-        if len(clamped) > MAX_TRAJECTORY_POINTS:
-            from elysium.data.compress import _compress_trajectory
-
-            as_lists = [[int(x), int(y)] for x, y in clamped]
-            out["trajectory"] = _compress_trajectory(as_lists, 2.0)
-        else:
-            out["trajectory"] = clamped
-    for key in ("position", "source", "destination"):
+    for key in _POINT_KEYS:
         pt = out.get(key)
         if isinstance(pt, (list, tuple)) and len(pt) >= 2:
             c = _clamp_canvas_point(pt)

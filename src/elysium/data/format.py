@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 
-from elysium.schemas.actions import SYSTEM_PROMPT
+from elysium.schemas.actions import build_system_prompt
 
 __all__ = ["build_dataset"]
 
@@ -83,6 +83,7 @@ def _load_chunks(chunks_dir: Path) -> dict[str, list[dict[str, Any]]]:
 def _to_conversation(
     chunk: dict[str, Any],
     instruction: str,
+    horizon: int,
     next_observation_frame: str = "",
 ) -> dict[str, Any]:
     """Convert a single chunk into a chat-template conversation record.
@@ -90,6 +91,7 @@ def _to_conversation(
     Args:
         chunk: Chunk dict with observation_frame and actions.
         instruction: Natural language instruction for this chunk.
+        horizon: Number of actions per chunk (drives system prompt wording).
         next_observation_frame: Path to the next chunk's observation frame,
             used as the visual reward target during RL training. Empty string
             if this is the last chunk in the session.
@@ -107,7 +109,7 @@ def _to_conversation(
         "messages": [
             {
                 "role": "system",
-                "content": [{"type": "text", "text": SYSTEM_PROMPT}],
+                "content": [{"type": "text", "text": build_system_prompt(horizon)}],
             },
             {
                 "role": "user",
@@ -128,6 +130,7 @@ def build_dataset(
     chunks_dir: Path,
     instructions_path: Path,
     output_dir: Path,
+    horizon: int,
     train_split: float = 0.8,
     seed: int = 42,
 ) -> None:
@@ -165,7 +168,7 @@ def build_dataset(
                 if i + 1 < len(chunks)
                 else ""
             )
-            recs.append(_to_conversation(chunk, instruction, next_frame))
+            recs.append(_to_conversation(chunk, instruction, horizon, next_frame))
         session_records[session_name] = recs
 
     if not session_records:

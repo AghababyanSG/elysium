@@ -21,6 +21,8 @@ from typing import Any
 import numpy as np
 from rdp import rdp
 
+from elysium.schemas.actions import CANVAS_SIZE
+
 __all__ = ["compress_session", "compress_all"]
 
 logger = logging.getLogger(__name__)
@@ -132,11 +134,37 @@ def _operations_to_strokes(operations: list[dict[str, Any]]) -> list[dict[str, A
     return strokes
 
 
+def _rescale_operation(op: dict[str, Any], scale: float) -> dict[str, Any]:
+    """Return a copy of op with spatial fields scaled by `scale`.
+
+    Touches start_pos / end_pos / size / trajectory — these are pixel-unit
+    fields that come from the raw annotator log. Other fields (timestamp,
+    color, percent-valued knobs) are left alone.
+    """
+    out = dict(op)
+    for key in ("start_pos", "end_pos"):
+        v = out.get(key)
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            out[key] = [int(round(v[0] * scale)), int(round(v[1] * scale))]
+    sz = out.get("size")
+    if isinstance(sz, (int, float)):
+        out["size"] = max(1, int(round(sz * scale)))
+    traj = out.get("trajectory")
+    if isinstance(traj, list):
+        out["trajectory"] = [
+            [int(round(p[0] * scale)), int(round(p[1] * scale))] for p in traj
+        ]
+    return out
+
+
 def _to_rgba(color: Sequence[int]) -> list[int]:
     if len(color) == 3:
         return [int(color[0]), int(color[1]), int(color[2]), 255]
     assert len(color) == 4, f"Unexpected color shape: {color!r}"
     return [int(c) for c in color]
+
+
+_MAX_SEGMENTS_PER_STROKE = 64
 
 
 def _compress_trajectory(trajectory: list[list[int]], epsilon: float) -> list[list[int]]:
@@ -147,24 +175,46 @@ def _compress_trajectory(trajectory: list[list[int]], epsilon: float) -> list[li
         epsilon: RDP tolerance in pixels. Higher = more compression.
 
     Returns:
-        Compressed list of [x, y] control points, capped at MAX_TRAJECTORY_POINTS.
+        Compressed list of [x, y] control points, capped at _MAX_SEGMENTS_PER_STROKE+1.
     """
-    from elysium.schemas.actions import MAX_TRAJECTORY_POINTS
-
+    cap = _MAX_SEGMENTS_PER_STROKE + 1
     if len(trajectory) <= 2:
-        return trajectory[:MAX_TRAJECTORY_POINTS]
+        return trajectory[:cap]
     pts = np.array(trajectory, dtype=float)
     mask = rdp(pts, epsilon=epsilon, return_mask=True)
     compressed = pts[mask].astype(int).tolist()
     if len(compressed) < 2:
         compressed = [trajectory[0], trajectory[-1]]
-    if len(compressed) <= MAX_TRAJECTORY_POINTS:
+    if len(compressed) <= cap:
         return compressed
-    indices = np.linspace(0, len(compressed) - 1, MAX_TRAJECTORY_POINTS, dtype=int)
+    indices = np.linspace(0, len(compressed) - 1, cap, dtype=int)
     subsampled = [compressed[i] for i in indices]
     subsampled[0] = compressed[0]
     subsampled[-1] = compressed[-1]
     return subsampled
+
+
+def _segment_actions_from_trajectory(
+    base: dict[str, Any],
+    trajectory: list[list[int]],
+) -> list[dict[str, Any]]:
+    """Turn a (compressed) polyline into one action per consecutive segment.
+
+    Each emitted action is `base` plus start_point/end_point keys. Strokes with a
+    single point produce a degenerate self-segment so the dab still renders.
+    """
+    if not trajectory:
+        return []
+    if len(trajectory) == 1:
+        p = trajectory[0]
+        return [{**base, "start_point": [int(p[0]), int(p[1])], "end_point": [int(p[0]), int(p[1])]}]
+    out: list[dict[str, Any]] = []
+    for i in range(len(trajectory) - 1):
+        a, b = trajectory[i], trajectory[i + 1]
+        out.append(
+            {**base, "start_point": [int(a[0]), int(a[1])], "end_point": [int(b[0]), int(b[1])]}
+        )
+    return out
 
 
 def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0) -> list[dict[str, Any]]:
@@ -184,6 +234,19 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
     operations: list[dict[str, Any]] = session.get("operations", [])
     image_name: str = session.get("image_name", session_path.stem)
     canvas_size: int = session.get("canvas_size", 512)
+
+    scale = CANVAS_SIZE / canvas_size
+    if scale != 1.0:
+        operations = [_rescale_operation(op, scale) for op in operations]
+        epsilon = epsilon * scale
+        logger.info(
+            "Rescaling %s: canvas_size %d -> %d (scale=%.3f, epsilon=%.3f)",
+            session_path.stem,
+            canvas_size,
+            CANVAS_SIZE,
+            scale,
+            epsilon,
+        )
 
     strokes = _operations_to_strokes(operations)
 
@@ -209,10 +272,13 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
         if tool == "scatter_brush":
             traj = stroke.get("trajectory", [stroke.get("start_pos", [0, 0])])
             color = stroke.get("color")
+            start = traj[0] if traj else [0, 0]
+            end = traj[-1] if traj else start
             compressed_strokes.append({
                 "action_type": "scatter_brush",
                 "color_rgba": _to_rgba(color) if color else [0, 0, 0, 255],
-                "trajectory": _compress_trajectory(traj, epsilon) if len(traj) > 2 else traj,
+                "start_point": [int(start[0]), int(start[1])],
+                "end_point": [int(end[0]), int(end[1])],
                 "size": max(1, int(stroke.get("size", 8))),
                 "shape": stroke.get("shape", "circle"),
                 "density": stroke.get("density", 5),
@@ -230,10 +296,13 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
         if tool == "pattern_brush":
             traj = stroke.get("trajectory", [stroke.get("start_pos", [0, 0])])
             color = stroke.get("color")
+            start = traj[0] if traj else [0, 0]
+            end = traj[-1] if traj else start
             compressed_strokes.append({
                 "action_type": "pattern_brush",
                 "color_rgba": _to_rgba(color) if color else [0, 0, 0, 255],
-                "trajectory": _compress_trajectory(traj, epsilon) if len(traj) > 2 else traj,
+                "start_point": [int(start[0]), int(start[1])],
+                "end_point": [int(end[0]), int(end[1])],
                 "size": max(1, int(stroke.get("size", 10))),
                 "shape": stroke.get("shape", "leaf"),
                 "spacing": stroke.get("spacing", 20),
@@ -246,9 +315,12 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
 
         if tool == "forward_warp":
             traj = stroke.get("trajectory", [stroke.get("start_pos", [0, 0]), stroke.get("end_pos", [0, 0])])
+            start = traj[0] if traj else [0, 0]
+            end = traj[-1] if len(traj) >= 2 else start
             compressed_strokes.append({
                 "action_type": "forward_warp",
-                "trajectory": _compress_trajectory(traj, epsilon) if len(traj) > 2 else traj,
+                "start_point": [int(start[0]), int(start[1])],
+                "end_point": [int(end[0]), int(end[1])],
                 "size": max(1, int(stroke.get("size", 20))),
                 "strength": stroke.get("strength", 50),
                 "frame_id": stroke["frame_id"],
@@ -297,33 +369,39 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
                 "frame_id": stroke["frame_id"],
             })
         elif tool == "eraser":
-            compressed_strokes.append({
+            base = {
                 "action_type": "eraser",
                 "stroke_size": max(1, stroke["size"]),
-                "trajectory": _compress_trajectory(traj, epsilon),
                 "frame_id": stroke["frame_id"],
-            })
+            }
+            compressed_strokes.extend(
+                _segment_actions_from_trajectory(base, _compress_trajectory(traj, epsilon))
+            )
         elif tool == "pencil":
-            compressed_strokes.append({
+            base = {
                 "action_type": "pencil",
                 "color_rgba": _to_rgba(stroke["color"]),
-                "trajectory": _compress_trajectory(traj, epsilon),
                 "frame_id": stroke["frame_id"],
-            })
+            }
+            compressed_strokes.extend(
+                _segment_actions_from_trajectory(base, _compress_trajectory(traj, epsilon))
+            )
         else:  # brush
-            compressed_strokes.append({
+            base = {
                 "action_type": "brush",
                 "color_rgba": _to_rgba(stroke["color"]),
                 "stroke_size": max(1, stroke["size"]),
                 "hardness": stroke.get("hardness", 100),
-                "trajectory": _compress_trajectory(traj, epsilon),
                 "frame_id": stroke["frame_id"],
-            })
+            }
+            compressed_strokes.extend(
+                _segment_actions_from_trajectory(base, _compress_trajectory(traj, epsilon))
+            )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result = {
         "image_name": image_name,
-        "canvas_size": canvas_size,
+        "canvas_size": CANVAS_SIZE,
         "session": session_path.stem,
         "strokes": compressed_strokes,
     }
@@ -333,7 +411,7 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
     original_ops = len(operations)
     compressed_ops = len(compressed_strokes)
     logger.info(
-        "Compressed %s: %d ops -> %d strokes",
+        "Compressed %s: %d ops -> %d action segments",
         session_path.stem,
         original_ops,
         compressed_ops,

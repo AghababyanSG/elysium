@@ -37,7 +37,14 @@ from elysium.model.action_io import build_generation_processor_inputs, parse_act
 from elysium.model.stop_on_json import JsonBalanceStoppingCriteria
 from elysium.schemas.actions import ActionChunk, CANVAS_SIZE
 
-__all__ = ["Predictor", "cached_repo_ids", "ensure_rgb_canvas_size", "model_compute_dtype", "run_inference"]
+__all__ = [
+    "Predictor",
+    "apply_image_pixel_budget",
+    "cached_repo_ids",
+    "ensure_rgb_canvas_size",
+    "model_compute_dtype",
+    "run_inference",
+]
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -50,6 +57,30 @@ def cached_repo_ids() -> set[str]:
     if not cache_dir.exists():
         return set()
     return {repo.repo_id for repo in scan_cache_dir(cache_dir=cache_dir).repos}
+
+
+def apply_image_pixel_budget(processor: Any, model_cfg: dict[str, Any]) -> None:
+    """Cap the vision processor's pixel budget to control image-token count.
+
+    Qwen3.5-VL's image processor stores ``size = {longest_edge, shortest_edge}``
+    in pixel-area units. NOTE: as of Unsloth 2026.4.x, the vision data collator
+    bypasses these settings and uses the model's default size — leaving this
+    helper as a no-op when used with Unsloth. Kept for non-Unsloth processors
+    and forward-compatibility.
+    """
+    img_min = model_cfg.get("image_min_pixels")
+    img_max = model_cfg.get("image_max_pixels")
+    if img_min is None and img_max is None:
+        return
+    image_processor = getattr(processor, "image_processor", None)
+    assert image_processor is not None, "Processor has no image_processor; cannot set pixel budget"
+    size = dict(getattr(image_processor, "size", {}) or {})
+    if img_min is not None:
+        size["shortest_edge"] = int(img_min)
+    if img_max is not None:
+        size["longest_edge"] = int(img_max)
+    image_processor.size = size
+    logger.info("Image processor size set to {}", size)
 
 
 def model_compute_dtype(model: Any) -> torch.dtype:
@@ -138,7 +169,9 @@ class Predictor:
         Returns:
             Parsed ActionChunk.
         """
-        inputs = build_generation_processor_inputs(self.processor, canvas_pil, instruction)
+        inputs = build_generation_processor_inputs(
+            self.processor, canvas_pil, instruction, self.horizon
+        )
         dtype = model_compute_dtype(self.model)
         inputs = {
             k: v.to(device=self.model.device, dtype=dtype if v.is_floating_point() else None)
@@ -276,6 +309,7 @@ def run_inference(
         load_in_4bit=cfg["model"].get("load_in_4bit", True),
         local_files_only=local_only,
     )
+    apply_image_pixel_budget(processor, cfg["model"])
     FastVisionModel.for_inference(model)
 
     predictor = Predictor(

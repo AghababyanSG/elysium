@@ -60,6 +60,12 @@ def run_pipeline(
     chunk_all(paths.compressed, paths.frames, paths.chunks, horizon=horizon, stride=stride)
 
     logger.info("Step 3/3: Building dataset (train_split=%.2f)", train_split)
-    build_dataset(paths.chunks, instr_path, paths.processed, train_split=train_split)
+    build_dataset(
+        paths.chunks,
+        instr_path,
+        paths.processed,
+        horizon=horizon,
+        train_split=train_split,
+    )
 
     logger.info("Data pipeline complete.")

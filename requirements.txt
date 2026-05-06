@@ -42,3 +42,4 @@ safetensors>=0.4.0
 bitsandbytes>=0.44.0
 sentencepiece>=0.1.99
 einops>=0.7.0
+tensorboard>=2.15.0

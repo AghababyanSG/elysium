@@ -1,11 +1,17 @@
 """Launch QLoRA fine-tuning (SFT) or REINFORCE RL training.
 
+The data pipeline (compress -> chunk -> format) is run before every training
+launch so the dataset always reflects the current config (canvas size,
+horizon, RDP epsilon, etc.). Pass --skip-prepare to bypass when you know the
+processed data is up to date and want to iterate faster.
+
 Usage:
     python scripts/train.py                          # SFT only
     python scripts/train.py --epochs 5 --batch-size 2
     python scripts/train.py --rl                     # RL only (requires SFT checkpoint)
     python scripts/train.py --sft --rl               # SFT warmup then RL
     python scripts/train.py --config configs/train.yaml --rl
+    python scripts/train.py --skip-prepare           # reuse existing data/processed
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from elysium.data.pipeline import run_pipeline
 from elysium.model.train import run_training
 
 
@@ -41,11 +48,20 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to SFT checkpoint to initialise RL from (default: models/checkpoints/final)",
     )
+    parser.add_argument(
+        "--skip-prepare",
+        action="store_true",
+        help="Skip the data prep pipeline (compress -> chunk -> format). "
+             "Use only when you know data/processed/ is already up to date.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    if not args.skip_prepare:
+        run_pipeline(args.config)
 
     run_sft = not args.rl or args.sft
     run_rl = args.rl

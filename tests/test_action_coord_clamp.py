@@ -6,17 +6,28 @@ from elysium.schemas.actions import CANVAS_SIZE, parse_action
 
 
 class TestActionCoordClamp(unittest.TestCase):
-    def test_parse_action_clamps_trajectory_to_canvas(self) -> None:
+    def test_parse_action_clamps_segment_endpoints_to_canvas(self) -> None:
         a = parse_action(
             {
                 "action_type": "pencil",
                 "color_rgba": [0, 0, 0, 255],
-                "trajectory": [[0, 0], [CANVAS_SIZE, -1], [100, 100]],
+                "start_point": [0, 0],
+                "end_point": [CANVAS_SIZE, -1],
             }
         )
-        self.assertEqual(a.trajectory[0], (0, 0))
-        self.assertEqual(a.trajectory[1], (CANVAS_SIZE - 1, 0))
-        self.assertEqual(a.trajectory[2], (100, 100))
+        self.assertEqual(a.start_point, (0, 0))
+        self.assertEqual(a.end_point, (CANVAS_SIZE - 1, 0))
+
+    def test_parse_action_legacy_trajectory_collapses_to_endpoints(self) -> None:
+        a = parse_action(
+            {
+                "action_type": "pencil",
+                "color_rgba": [0, 0, 0, 255],
+                "trajectory": [[0, 0], [50, 50], [CANVAS_SIZE, CANVAS_SIZE]],
+            }
+        )
+        self.assertEqual(a.start_point, (0, 0))
+        self.assertEqual(a.end_point, (CANVAS_SIZE - 1, CANVAS_SIZE - 1))
 
     def test_parse_action_clamps_fill_position(self) -> None:
         a = parse_action(

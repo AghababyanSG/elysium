@@ -5,12 +5,14 @@ is loaded with its LoRA adapters as the policy; the frozen reference policy is
 obtained via disable_adapter() on the same PEFT model — no extra copy needed.
 
 Config: configs/train.yaml  (rl section)
-Data:   data/processed/     (HuggingFace DatasetDict with next_image)
+Data:   data/processed/     (HuggingFace DatasetDict; uses gt_actions to
+                             synthesize the per-prompt reward target)
 Output: models/checkpoints/rl_final/
 """
 
 from __future__ import annotations
 
+import datetime
 import os
 from json import JSONDecodeError
 from pathlib import Path
@@ -39,8 +41,9 @@ from elysium.model.action_io import (
     apply_action_chat_template,
     parse_action_chunk,
 )
-from elysium.model.predict import cached_repo_ids, ensure_rgb_canvas_size
+from elysium.model.predict import apply_image_pixel_budget, cached_repo_ids, ensure_rgb_canvas_size
 from elysium.model.reward import visual_reward
+from elysium.schemas.actions import ActionChunk
 
 __all__ = ["run_rl_training"]
 
@@ -72,25 +75,25 @@ def _extract_instruction(row: dict[str, Any]) -> str:
     raise AssertionError("Dataset sample is missing user instruction text")
 
 
-def _build_grpo_dataset(train_data: Any, processor: Any) -> Dataset:
+def _build_grpo_dataset(train_data: Any, processor: Any, horizon: int) -> Dataset:
     prompts: list[str] = []
     images: list[str] = []
-    next_images: list[str] = []
+    gt_actions: list[str] = []
 
     for row in train_data:
         instruction = _extract_instruction(row)
-        messages = action_conversation_messages(instruction)
+        messages = action_conversation_messages(instruction, horizon)
         prompt_text = apply_action_chat_template(processor, messages, add_generation_prompt=True)
         prompts.append(prompt_text)
         images.append(row["image"])
-        next_images.append(row.get("next_image", ""))
+        gt_actions.append(row["gt_actions"])
 
     return Dataset.from_dict(
-        {"prompt": prompts, "image": images, "next_image": next_images},
+        {"prompt": prompts, "image": images, "gt_actions": gt_actions},
         features=Features({
             "prompt": Value("string"),
             "image": HFImage(),
-            "next_image": Value("string"),
+            "gt_actions": Value("string"),
         }),
     )
 
@@ -99,11 +102,11 @@ def _make_reward_fn(horizon: int) -> Any:
     def visual_reward_fn(
         completions: list[Any],
         image: list[Image.Image],
-        next_image: list[str],
+        gt_actions: list[str],
         **kwargs: Any,
     ) -> list[float]:
         rewards: list[float] = []
-        for completion, canvas_pil, gt_path in zip(completions, image, next_image):
+        for completion, canvas_pil, gt_json in zip(completions, image, gt_actions):
             text = completion if isinstance(completion, str) else completion[-1]["content"]
             canvas_np = _image_to_float32(ensure_rgb_canvas_size(canvas_pil))
 
@@ -114,9 +117,9 @@ def _make_reward_fn(horizon: int) -> Any:
                 continue
 
             predicted = execute_chunk(canvas_np, pred_chunk, original=canvas_np)
-
-            gt_np = _image_to_float32(ensure_rgb_canvas_size(Image.open(gt_path).convert("RGB"))) if gt_path else None
-            rewards.append(visual_reward(predicted, gt_np, canvas_np))
+            gt_chunk = ActionChunk.from_json_str(gt_json, horizon)
+            gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
+            rewards.append(visual_reward(predicted, gt_target, canvas_np))
 
         return rewards
 
@@ -143,6 +146,12 @@ def run_rl_training(
     output_dir = Path(data_cfg["checkpoint_dir"]) / "rl_final"
     horizon: int = data_cfg["action_horizon"]
 
+    tb_root = Path(cfg.get("training", {}).get("tensorboard_dir", "logs/tensorboard"))
+    run_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = tb_root / f"rl_{run_tag}"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("TensorBoard logs → {}", log_dir)
+
     base_model = model_cfg["name"]
     local_only = base_model in cached_repo_ids()
 
@@ -152,6 +161,7 @@ def run_rl_training(
         load_in_4bit=model_cfg.get("load_in_4bit", True),
         local_files_only=local_only,
     )
+    apply_image_pixel_budget(processor, model_cfg)
     FastVisionModel.for_training(model)
 
     dataset_path = Path(data_cfg["dataset_path"])
@@ -160,33 +170,39 @@ def run_rl_training(
     train_data = raw_dataset["train"]
 
     logger.info("Building GRPO dataset ({} samples)", len(train_data))
-    grpo_dataset = _build_grpo_dataset(train_data, processor)
+    grpo_dataset = _build_grpo_dataset(train_data, processor, horizon)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    grpo_config = GRPOConfig(
+    grpo_kwargs: dict[str, Any] = dict(
         output_dir=str(output_dir),
         num_train_epochs=rl_cfg.get("epochs", 3),
-        learning_rate=rl_cfg.get("learning_rate", 1e-6),
+        learning_rate=rl_cfg.get("learning_rate", 5e-6),
         per_device_train_batch_size=rl_cfg.get("per_device_batch_size", 1),
-        gradient_accumulation_steps=rl_cfg.get("gradient_accumulation_steps", 8),
-        num_generations=rl_cfg.get("num_generations", 4),
+        gradient_accumulation_steps=rl_cfg.get("gradient_accumulation_steps", 4),
+        num_generations=rl_cfg.get("num_generations", 8),
         temperature=rl_cfg.get("temperature", 0.7),
         top_p=rl_cfg.get("top_p", 0.9),
-        beta=rl_cfg.get("beta", 0.1),
-        max_prompt_length=rl_cfg.get("max_prompt_length", 2048),
-        max_completion_length=rl_cfg.get("max_completion_length", 512),
+        beta=rl_cfg.get("beta", 0.02),
+        max_prompt_length=rl_cfg.get("max_prompt_length", 768),
+        max_completion_length=rl_cfg.get("max_completion_length", 256),
+        repetition_penalty=rl_cfg.get("repetition_penalty", 1.05),
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
-        report_to="none",
+        report_to="tensorboard",
+        logging_dir=str(log_dir),
         remove_unused_columns=False,
         logging_steps=1,
-        save_steps=rl_cfg.get("save_steps", 50),
+        save_steps=rl_cfg.get("save_steps", 100),
+        save_total_limit=rl_cfg.get("save_total_limit", 3),
         log_completions=True,
         max_grad_norm=rl_cfg.get("max_grad_norm", 0.1),
         warmup_ratio=rl_cfg.get("warmup_ratio", 0.1),
         lr_scheduler_type=rl_cfg.get("lr_scheduler_type", "cosine"),
     )
+    if "max_steps" in rl_cfg and rl_cfg["max_steps"] is not None:
+        grpo_kwargs["max_steps"] = int(rl_cfg["max_steps"])
+    grpo_config = GRPOConfig(**grpo_kwargs)
 
     trainer = GRPOTrainer(
         model=model,
