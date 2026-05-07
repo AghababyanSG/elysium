@@ -57,6 +57,50 @@ class _AssertParamsFinite(TrainerCallback):
                 )
 
 
+class _DetectCollapse(TrainerCallback):
+    """Abort training if the policy collapses to noop / wrong-answer output.
+
+    True collapse with the coverage-weighted reward looks like:
+      - very short completions, AND
+      - sustained near-zero mean reward.
+
+    A short completion with HIGH reward is fine — that's perfect imitation
+    (e.g. `gaussian_blur radius=2` exactly matching GT). Don't false-alarm
+    on those.
+    """
+
+    def __init__(self, noop_token_len: int, warmup_steps: int = 50, window: int = 20) -> None:
+        # Trained completions include template suffix + EOS, so actual noop
+        # completions run ~2x the bare-JSON token count (observed ~29 vs 14
+        # measured for horizon=2). Use 2x with a +5 cushion as the threshold.
+        self.noop_threshold = max(2 * noop_token_len + 5, noop_token_len + 15)
+        self.noop_len = noop_token_len
+        self.warmup = warmup_steps
+        self.window = window
+        self._collapsed_logs = 0
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is None or state.global_step < self.warmup:
+            return
+        mean_len = logs.get("completions/mean_length")
+        mean_reward = logs.get("rewards/visual_reward_fn/mean", logs.get("reward"))
+        if mean_len is None or mean_reward is None:
+            return
+        is_noop_length = mean_len <= self.noop_threshold
+        is_low_reward = mean_reward < 0.05
+        if is_noop_length and is_low_reward:
+            self._collapsed_logs += 1
+        else:
+            self._collapsed_logs = 0
+        if self._collapsed_logs >= self.window:
+            raise RuntimeError(
+                f"RL collapsed to degenerate short low-reward output "
+                f"(step {state.global_step}): mean_len={mean_len:.1f} ≤ "
+                f"{self.noop_threshold:.0f}, mean_reward={mean_reward:.3f} for "
+                f"{self.window} consecutive logs."
+            )
+
+
 def _load_config(config_path: Path) -> dict[str, Any]:
     with config_path.open() as f:
         return yaml.safe_load(f)
@@ -75,18 +119,60 @@ def _extract_instruction(row: dict[str, Any]) -> str:
     raise AssertionError("Dataset sample is missing user instruction text")
 
 
+_MIN_GT_PIXELS_FOR_RL = 50  # mirrors reward._MIN_GT_PIXELS — keep in sync
+
+
 def _build_grpo_dataset(train_data: Any, processor: Any, horizon: int) -> Dataset:
+    """Build the GRPO dataset, dropping terminal and near-terminal rows.
+
+    RL must not see rows where the optimal answer is "do nothing" — those create
+    a degenerate noop attractor (see plans/merry-scribbling-acorn.md). Filter on
+    three signals:
+      1. `next_image == ""` — structural marker for the last chunk in a session
+      2. `ActionChunk.is_terminal` — all-noop GT chunk
+      3. executing GT changes < 50 pixels — matches the reward function's
+         minimum-coverage assertion
+    """
     prompts: list[str] = []
-    images: list[str] = []
+    images: list[Any] = []
     gt_actions: list[str] = []
+    dropped_terminal = 0
+    dropped_near_terminal = 0
 
     for row in train_data:
+        if not row.get("next_image"):
+            dropped_terminal += 1
+            continue
+        gt_chunk = ActionChunk.from_json_str(row["gt_actions"], horizon)
+        if gt_chunk.is_terminal:
+            dropped_terminal += 1
+            continue
+        image_field = row["image"]
+        pil = image_field if isinstance(image_field, Image.Image) else Image.open(image_field)
+        # Must match the reward's image path exactly — the reward operates on
+        # CANVAS_SIZE (256) not the raw 512x512, so a row with >50 changed
+        # pixels at native res can drop below 50 after downsampling.
+        canvas_np = _image_to_float32(ensure_rgb_canvas_size(pil))
+        gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
+        diff = np.abs(gt_target - canvas_np).max(axis=2)
+        if int((diff > 0.01).sum()) < _MIN_GT_PIXELS_FOR_RL:
+            dropped_near_terminal += 1
+            continue
+
         instruction = _extract_instruction(row)
         messages = action_conversation_messages(instruction, horizon)
         prompt_text = apply_action_chat_template(processor, messages, add_generation_prompt=True)
         prompts.append(prompt_text)
         images.append(row["image"])
         gt_actions.append(row["gt_actions"])
+
+    total = len(train_data)
+    kept = len(prompts)
+    logger.info(
+        "GRPO dataset filter: kept {}/{} ({:.1f}%); dropped {} terminal, {} near-terminal",
+        kept, total, 100.0 * kept / max(total, 1), dropped_terminal, dropped_near_terminal,
+    )
+    assert kept > 0, "GRPO dataset is empty after filtering — check data/processed/"
 
     return Dataset.from_dict(
         {"prompt": prompts, "image": images, "gt_actions": gt_actions},
@@ -105,10 +191,21 @@ def _make_reward_fn(horizon: int) -> Any:
         gt_actions: list[str],
         **kwargs: Any,
     ) -> list[float]:
+        # Within one reward call (one GRPO group), all `num_generations`
+        # completions share a single (canvas, gt_chunk) pair — cache the
+        # executed GT canvas to skip ~7/8 of the GT executions per step.
+        gt_cache: dict[tuple[int, str], np.ndarray] = {}
+        canvas_cache: dict[int, np.ndarray] = {}
+
         rewards: list[float] = []
         for completion, canvas_pil, gt_json in zip(completions, image, gt_actions):
             text = completion if isinstance(completion, str) else completion[-1]["content"]
-            canvas_np = _image_to_float32(ensure_rgb_canvas_size(canvas_pil))
+
+            pil_id = id(canvas_pil)
+            canvas_np = canvas_cache.get(pil_id)
+            if canvas_np is None:
+                canvas_np = _image_to_float32(ensure_rgb_canvas_size(canvas_pil))
+                canvas_cache[pil_id] = canvas_np
 
             try:
                 pred_chunk = parse_action_chunk(text, horizon)
@@ -117,8 +214,12 @@ def _make_reward_fn(horizon: int) -> Any:
                 continue
 
             predicted = execute_chunk(canvas_np, pred_chunk, original=canvas_np)
-            gt_chunk = ActionChunk.from_json_str(gt_json, horizon)
-            gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
+            gt_key = (pil_id, gt_json)
+            gt_target = gt_cache.get(gt_key)
+            if gt_target is None:
+                gt_chunk = ActionChunk.from_json_str(gt_json, horizon)
+                gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
+                gt_cache[gt_key] = gt_target
             rewards.append(visual_reward(predicted, gt_target, canvas_np))
 
         return rewards
@@ -177,16 +278,16 @@ def run_rl_training(
     grpo_kwargs: dict[str, Any] = dict(
         output_dir=str(output_dir),
         num_train_epochs=rl_cfg.get("epochs", 3),
-        learning_rate=rl_cfg.get("learning_rate", 5e-6),
+        learning_rate=rl_cfg.get("learning_rate", 2e-6),
         per_device_train_batch_size=rl_cfg.get("per_device_batch_size", 1),
         gradient_accumulation_steps=rl_cfg.get("gradient_accumulation_steps", 4),
         num_generations=rl_cfg.get("num_generations", 8),
-        temperature=rl_cfg.get("temperature", 0.7),
-        top_p=rl_cfg.get("top_p", 0.9),
-        beta=rl_cfg.get("beta", 0.02),
+        temperature=rl_cfg.get("temperature", 1.0),
+        top_p=rl_cfg.get("top_p", 0.95),
+        beta=rl_cfg.get("beta", 0.1),
         max_prompt_length=rl_cfg.get("max_prompt_length", 768),
-        max_completion_length=rl_cfg.get("max_completion_length", 256),
-        repetition_penalty=rl_cfg.get("repetition_penalty", 1.05),
+        max_completion_length=rl_cfg.get("max_completion_length", 384),
+        repetition_penalty=rl_cfg.get("repetition_penalty", 1.0),
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
         report_to="tensorboard",
@@ -204,13 +305,20 @@ def run_rl_training(
         grpo_kwargs["max_steps"] = int(rl_cfg["max_steps"])
     grpo_config = GRPOConfig(**grpo_kwargs)
 
+    noop_json = ActionChunk.noop_chunk(horizon).to_json_str()
+    noop_token_len = len(processor.tokenizer(noop_json, add_special_tokens=False)["input_ids"])
+    logger.info("Noop-JSON token length for collapse detection: {}", noop_token_len)
+
     trainer = GRPOTrainer(
         model=model,
         processing_class=processor,
         args=grpo_config,
         train_dataset=grpo_dataset,
         reward_funcs=[_make_reward_fn(horizon)],
-        callbacks=[_AssertParamsFinite()],
+        callbacks=[
+            _AssertParamsFinite(),
+            _DetectCollapse(noop_token_len=noop_token_len),
+        ],
     )
 
     logger.info(

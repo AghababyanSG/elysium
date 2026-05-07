@@ -14,8 +14,8 @@ lora:
   bias: "none"
 
 training:
-  batch_size: 4
-  eval_batch_size: 4
+  batch_size: 16
+  eval_batch_size: 16
   gradient_accumulation_steps: 16
   learning_rate: 1.0e-4
   epochs: 12
@@ -54,16 +54,16 @@ inference:
 rl:
   enabled: true
   epochs: 3
-  learning_rate: 5.0e-6
-  per_device_batch_size: 1
-  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-6
+  per_device_batch_size: 2
+  gradient_accumulation_steps: 2
   num_generations: 8
   temperature: 1.0
   top_p: 1.0
-  beta: 0.02
+  beta: 0.1
   repetition_penalty: 1.0
   max_prompt_length: 768
-  max_completion_length: 256
+  max_completion_length: 384
   max_steps: 400
   save_steps: 100
   save_total_limit: 3

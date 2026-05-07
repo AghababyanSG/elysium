@@ -208,6 +208,7 @@ class Predictor:
         image: Image.Image,
         instruction: str,
         show_preview: bool = False,
+        frames_dir: Path | None = None,
     ) -> tuple[Image.Image, list[ActionChunk]]:
         """Run the full chunk-execute-reobserve loop.
 
@@ -216,6 +217,8 @@ class Predictor:
             instruction: Natural language instruction.
             show_preview: If True, open a live preview window. Closing the window
                           stops inference early.
+            frames_dir: If set, save the canvas after each chunk to this directory
+                        as frame_0000.png, frame_0001.png, …
 
         Returns:
             Tuple of (final edited image, list of all ActionChunks executed).
@@ -224,6 +227,11 @@ class Predictor:
         original = _image_to_float32(image)
         canvas = original.copy()
         executed_chunks: list[ActionChunk] = []
+
+        if frames_dir is not None:
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            _float32_to_pil(original).save(frames_dir / "frame_0000.png")
+            logger.info("Saving frames to {}", frames_dir)
 
         fig = None
         im_handle = None
@@ -261,6 +269,9 @@ class Predictor:
             executed_chunks.append(chunk)
             logger.info("Step {}: executed chunk ({} actions)", step, len(chunk.actions))
 
+            if frames_dir is not None:
+                _float32_to_pil(canvas).save(frames_dir / f"frame_{step + 1:04d}.png")
+
             if show_preview:
                 im_handle.set_data(_float32_to_pil(canvas))
                 fig.canvas.draw()
@@ -283,6 +294,7 @@ def run_inference(
     output_path: Path,
     config_path: Path = Path("configs/train.yaml"),
     show_preview: bool = False,
+    frames_dir: Path | None = None,
 ) -> None:
     """Load model from checkpoint and run inference on an image.
 
@@ -324,7 +336,7 @@ def run_inference(
     image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))
     logger.info("Running inference: '{}'", instruction)
 
-    result_image, chunks = predictor.run(image, instruction, show_preview=show_preview)
+    result_image, chunks = predictor.run(image, instruction, show_preview=show_preview, frames_dir=frames_dir)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result_image.save(str(output_path))

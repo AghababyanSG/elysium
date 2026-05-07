@@ -1,0 +1,804 @@
+% !TEX program = xelatex
+\documentclass[12pt,a4paper]{report}
+
+% ------------------------------------------------------------
+% Compile in Overleaf with XeLaTeX.
+% The thesis uses Unicode Armenian text and keeps technical terms in English.
+% ------------------------------------------------------------
+
+\usepackage[a4paper,left=3cm,right=1.5cm,top=2cm,bottom=2.5cm]{geometry}
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{armenian}
+\setotherlanguage{english}
+\setmainfont{DejaVu Serif}
+\newfontfamily\armenianfont{DejaVu Serif}
+\newfontfamily\englishfont{DejaVu Serif}
+\setmonofont{DejaVu Sans Mono}
+\newfontfamily\armenianfonttt{DejaVu Sans Mono}
+
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{indentfirst}
+\setlength{\parindent}{1cm}
+\setlength{\parskip}{0pt}
+
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{array,booktabs,longtable,tabularx}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{tocloft}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    urlcolor=black
+}
+
+\captionsetup[figure]{font=footnotesize,labelfont=bf,justification=centering,labelsep=period}
+\captionsetup[table]{font=footnotesize,labelfont=bf,justification=centering,labelsep=period,position=top}
+
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\centering\fontsize{12pt}{18pt}\selectfont}
+  {ԳԼՈՒԽ \thechapter}
+  {0.5em}
+  {\MakeUppercase}
+\titlespacing*{\chapter}{0pt}{0pt}{1.5em}
+
+\titleformat{\section}
+  {\normalfont\bfseries\fontsize{12pt}{18pt}\selectfont}
+  {\thesection}{0.8em}{}
+\titleformat{\subsection}
+  {\normalfont\bfseries\fontsize{12pt}{18pt}\selectfont}
+  {\thesubsection}{0.8em}{}
+
+\renewcommand{\contentsname}{Բովանդակություն}
+\renewcommand{\bibname}{ՕԳՏԱԳՈՐԾՎԱԾ ԳՐԱԿԱՆՈՒԹՅԱՆ ՑԱՆԿ}
+\renewcommand{\tablename}{Աղյուսակ}
+\renewcommand{\figurename}{Նկար}
+
+% Force Western Arabic digits in headings, TOC, pages and enumerate labels
+% even under Armenian language settings.
+\makeatletter
+\newcommand{\UseWesternDigits}{%
+  \renewcommand{\thepage}{\number\c@page}%
+  \renewcommand{\thechapter}{\number\c@chapter}%
+  \renewcommand{\thesection}{\number\c@chapter.\number\c@section}%
+  \renewcommand{\thesubsection}{\number\c@chapter.\number\c@section.\number\c@subsection}%
+  \renewcommand{\thefigure}{\number\c@chapter.\number\c@figure}%
+  \renewcommand{\thetable}{\number\c@chapter.\number\c@table}%
+  \renewcommand{\theequation}{\number\c@chapter.\number\c@equation}%
+  \renewcommand{\theenumi}{\number\c@enumi}%
+  \renewcommand{\theenumii}{\number\c@enumii}%
+  \renewcommand{\labelenumi}{\theenumi)}%
+  \renewcommand{\labelenumii}{\theenumii)}%
+}
+\makeatother
+\AtBeginDocument{\UseWesternDigits}
+
+\lstdefinestyle{code}{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  showstringspaces=false,
+  keepspaces=true
+}
+
+\newcommand{\Eng}[1]{\textenglish{#1}}
+\newcommand{\TODO}[1]{\textbf{[ԼՐԱՑՆԵԼ՝ #1]}}
+
+\begin{document}
+
+% ------------------------------------------------------------
+% TITLE PAGE
+% ------------------------------------------------------------
+\begin{titlepage}
+\begin{center}
+{\bfseries \TODO{Համալսարանի անվանումը}}\\[0.3cm]
+{\bfseries \TODO{Ֆակուլտետի անվանումը}}\\[0.3cm]
+{\bfseries \TODO{Ամբիոնի անվանումը}}\\[2.0cm]
+
+{\bfseries ԲԱԿԱԼԱՎՐԻ ԱՎԱՐՏԱԿԱՆ ԱՇԽԱՏԱՆՔ}\\[1.5cm]
+
+{\bfseries Թեմա՝}\\[0.4cm]
+{\bfseries \large \Eng{AI Image Manipulation} համակարգի նախագծում և իրականացում}\\[2.0cm]
+
+\begin{tabular}{>{\bfseries}p{5cm}p{8cm}}
+Ուսանող՝ & Սպարտակ Աղաբաբյան \\
+Մասնագիտություն՝ & \TODO{մասնագիտությունը} \\
+Ղեկավար՝ & \TODO{ղեկավարի անունը, գիտական աստիճանը} \\
+\end{tabular}
+
+\vfill
+{\bfseries \TODO{Քաղաք} -- 2026}
+\end{center}
+\end{titlepage}
+
+% ------------------------------------------------------------
+% SIGNATURE PAGE
+% ------------------------------------------------------------
+\thispagestyle{empty}
+\begin{center}
+{\bfseries ՍՏՈՐԱԳՐՈՒԹՅՈՒՆՆԵՐԻ ԷՋ}
+\end{center}
+\vspace{2cm}
+
+\begin{tabularx}{\textwidth}{>{\bfseries}p{5cm}X p{4cm}}
+Ուսանող՝ & Սպարտակ Աղաբաբյան & \hrulefill \\
+& & {\centering ստորագրություն\par} \\[1.2cm]
+Ղեկավար՝ & \TODO{ղեկավարի անունը} & \hrulefill \\
+& & {\centering ստորագրություն\par} \\[1.2cm]
+Ամբիոնի վարիչ՝ & \TODO{անունը} & \hrulefill \\
+& & {\centering ստորագրություն\par} \\
+\end{tabularx}
+
+\newpage
+
+% ------------------------------------------------------------
+% ABSTRACT
+% ------------------------------------------------------------
+\thispagestyle{empty}
+\begin{center}
+{\bfseries ՀԱՄԱՌՈՏԱԳԻՐ}
+\end{center}
+
+\noindent\textbf{Հայերեն անվանում՝} \Eng{AI Image Manipulation} համակարգի նախագծում և իրականացում։\\
+\textbf{Ռուսերեն անվանում՝} Разработка и реализация системы \Eng{AI Image Manipulation}.\\
+\textbf{Անգլերեն անվանում՝} \Eng{Design and Implementation of an AI Image Manipulation System}.
+
+Այս աշխատանքը նվիրված է \Eng{AI Image Manipulation} համակարգի նախագծմանը և իրականացմանը։ Աշխատանքի հիմքում ընկած է այն գաղափարը, որ image editing-ը կարելի է ներկայացնել ոչ միայն որպես pixels-ի անմիջական գեներացում, այլ նաև որպես գործողությունների հաջորդականություն, որտեղ մոդելը տեսնում է ներկա canvas-ը, ստանում է natural language instruction, ապա վերադարձնում է structured JSON action sequence։ Նման մոտեցումը թույլ է տալիս image manipulation task-ը մոտեցնել \Eng{vision-language-action} խնդրին, որտեղ output-ը ոչ թե անմիջապես վերջնական պատկերն է, այլ վերահսկելի և վերարտադրելի edit operations-ի շարք։
+
+Աշխատանքում նախագծվել է data annotation tool, որը թույլ է տալիս օգտատիրոջը կատարել brush, pencil, eraser, fill, picker, color adjustment, text overlay, blur, clone stamp, scatter brush, pattern brush և forward warp գործողություններ։ Յուրաքանչյուր գործողություն գրանցվում է session log-ում, իսկ canvas-ի միջանկյալ վիճակները պահպանվում են որպես frames։ Այնուհետև մշակվել է data preparation pipeline, որը raw operations-ը խմբավորում է strokes-ի, compress է անում trajectory-ները \Eng{Ramer--Douglas--Peucker} algorithm-ի միջոցով, բաժանում է տվյալները fixed-horizon action chunks-ի և ձևավորում է \Eng{HuggingFace Dataset}՝ model fine-tuning-ի համար։
+
+Մոդելավորման մասում ներկայացվում է \Eng{Qwen/Qwen3.5-4B} vision-language model-ի վրա հիմնված training approach, որտեղ օգտագործվում է \Eng{QLoRA} supervised fine-tuning և reward-based \Eng{GRPO} training։ Համակարգի inference փուլը կառուցված է observe--predict--execute--reobserve loop-ի վրա․ մոդելը կանխատեսում է action chunk, deterministic canvas executor-ը կիրառում է գործողությունները, ապա ստացված canvas-ը կրկին տրվում է մոդելին մինչև completion կամ սահմանված iteration limit։
+
+Աշխատանքի ելակետն այն է, որ ժամանակակից image generation model-ները արդեն լավ են լուծում ամբողջական image generation խնդիրը, ուստի ավելի հետաքրքիր է կառուցել controlled editing layer existing image-ի վրա։ Արդյունքը research prototype է, որը միավորում է annotation, data processing, action schema validation, deterministic rendering, supervised training, reward-based optimization և inference pipeline components։ Աշխատանքը ցույց է տալիս, որ image editing task-ը կարելի է ձևակերպել որպես controllable tool-based action generation problem, ինչը ավելի թափանցիկ և վերլուծելի մոտեցում է՝ համեմատած ամբողջական image-to-image black-box generation-ի հետ։
+
+\newpage
+
+% Page numbering starts from the table of contents; according to the standard it is counted as page 4.
+\pagenumbering{arabic}
+\UseWesternDigits
+\setcounter{page}{4}
+\tableofcontents
+\newpage
+
+% ------------------------------------------------------------
+\chapter*{ՆԵՐԱԾՈՒԹՅՈՒՆ}
+\addcontentsline{toc}{chapter}{ՆԵՐԱԾՈՒԹՅՈՒՆ}
+
+Այսօր image generation model-ները արդեն հասել են այնպիսի որակի, որ այս աշխատանքի շրջանակում 0-ից general-purpose image generation model կառուցելը նպատակահարմար չէ։ Խնդիրը ոչ թե նոր text-to-image generator ստեղծելն է, այլ ուսումնասիրելը, թե ինչպես կարելի է existing image-ի վրա կատարել controlled, local և interpretable փոփոխություններ՝ առանց ամբողջ image-ը անտեղի վերագեներացնելու։
+
+Դասական image generation կամ image-to-image editing մոտեցումների հիմնական սահմանափակումներից մեկն այն է, որ natural language instruction ստանալիս model-ը հաճախ փոփոխում է ոչ միայն խնդրված հատվածը, այլև image-ի այլ մասերը։ Օրինակ, եթե օգտատերը խնդրում է blur անել logo-ն, նկարել moustache կամ փոխել միայն փոքր region-ի գույնը, model-ը կարող է միաժամանակ փոխել lighting-ը, background-ը, texture-ը կամ object identity-ն։ Այդ պատճառով այս աշխատանքում շեշտը դրվում է ոչ թե final image-ի անմիջական generation-ի, այլ edit process-ի վերահսկելի ներկայացման վրա։
+
+Առաջարկվող ուղղությունը նորարարական է այն իմաստով, որ image manipulation-ը ձևակերպվում է որպես tool-based action generation problem։ Model-ը չի վերադարձնում միայն վերջնական image, այլ կանխատեսում է executable actions՝ օրինակ pencil, brush, eraser, fill, gaussian blur, clone stamp, text overlay կամ forward warp։ Այսպիսով համակարգը փորձում է գործել designer-ի նման․ այն «ընտրում է» գործիք, որոշում է location-ը, size-ը, color-ը և հաջորդական քայլերով փոփոխում է canvas-ը։ Հեղինակի ուսումնասիրած open-source և academic նյութերի շրջանակում նման explicit tool-action workflow-ը դեռ լայնորեն տարածված չէ, ինչն էլ աշխատանքին տալիս է research prototype-ի նշանակություն։
+
+Այս ձևակերպումը նաև թույլ է տալիս model output-ը դարձնել ստուգելի և կրկնելի։ Եթե գործողությունները ներկայացվում են structured JSON ձևաչափով, ապա system-ը կարող է validate անել դրանք, deterministic կերպով execute անել, պահպանել session history-ն և վերլուծել սխալները։ Սա է աշխատանքի հիմնական գաղափարը՝ image manipulation-ը դիտարկել ոչ թե որպես single black-box generation step, այլ որպես designer-like sequential editing process։
+
+\section*{Աշխատանքի արդիականությունը}
+\addcontentsline{toc}{section}{Աշխատանքի արդիականությունը}
+
+Աշխատանքի արդիականությունը պայմանավորված է երեք հիմնական հանգամանքով։ Առաջինը՝ ժամանակակից image editing համակարգերում կա աճող պահանջ controlled և interpretable editing-ի նկատմամբ։ Օգտատերերը հաճախ ցանկանում են ոչ թե ամբողջ image-ի style transfer կամ regeneration, այլ որոշակի semantic edit, որը պետք է լինի local, explainable և կրկնելի։ Երկրորդը՝ \Eng{vision-language models}-ի զարգացումը հնարավորություն է տալիս natural language instruction-ը կապել visual context-ի հետ, սակայն անհրաժեշտ է պարզել, թե ինչպես կարելի է այդ կապը վերածել concrete editing actions-ի։ Երրորդը՝ training data-ի հավաքումը image manipulation-ի համար բարդ է, քանի որ միայն before/after image pair-ը հաճախ չի բացատրում, թե ինչ գործողություններ են իրականացվել։ Այս աշխատանքում առաջարկվող annotation-and-action-logging մոտեցումը լուծում է այդ խնդրի մի մասը՝ պահպանելով ոչ միայն final result-ը, այլ նաև edit process-ը։
+
+\section*{Աշխատանքի նպատակը և խնդիրները}
+\addcontentsline{toc}{section}{Աշխատանքի նպատակը և խնդիրները}
+
+Աշխատանքի նպատակն է նախագծել և իրականացնել \Eng{AI Image Manipulation} համակարգի research prototype, որտեղ image editing-ը ներկայացվում է որպես natural language instruction-ից դեպի structured action sequence mapping։
+
+Այս նպատակից բխում են հետևյալ խնդիրները.
+\begin{enumerate}
+    \item ուսումնասիրել image manipulation խնդրի առանձնահատկությունները և գործողությունների վրա հիմնված ձևակերպման առավելությունները,
+    \item նախագծել annotation tool, որը թույլ է տալիս հավաքել raw frames և user edit operations,
+    \item սահմանել action schema, որով հնարավոր է ներկայացնել տարբեր editing tools-ի գործողությունները,
+    \item մշակել data preparation pipeline՝ raw session logs-ից մինչև training-ready dataset,
+    \item իրականացնել deterministic canvas executor, որը կարող է կիրառել model-generated actions-ը և ստանալ edited canvas,
+    \item նկարագրել supervised fine-tuning և reward-based training մոտեցումները,
+    \item վերլուծել համակարգի սահմանափակումները և հետագա զարգացման ուղղությունները։
+\end{enumerate}
+
+\section*{Ուսումնասիրության օբյեկտը և առարկան}
+\addcontentsline{toc}{section}{Ուսումնասիրության օբյեկտը և առարկան}
+
+Ուսումնասիրության օբյեկտը \Eng{AI}-ի օգնությամբ image manipulation իրականացնող համակարգերն են։ Ուսումնասիրության առարկան այն մեթոդներն ու ծրագրային կառուցվածքներն են, որոնք թույլ են տալիս image editing instruction-ը վերածել structured, valid և executable action sequence-ի։
+
+\section*{Տեսական և կիրառական նշանակությունը}
+\addcontentsline{toc}{section}{Տեսական և կիրառական նշանակությունը}
+
+Տեսական տեսանկյունից աշխատանքը ցույց է տալիս, որ image manipulation-ը կարելի է ձևակերպել որպես \Eng{vision-language-action} խնդիր։ Այս ձևակերպումը միջանկյալ representation է ստեղծում natural language instruction-ի և pixel-level փոփոխության միջև։ Կիրառական տեսանկյունից աշխատանքը կարող է օգտագործվել որպես հիմք ավելի մեծ համակարգերի համար, որտեղ model-ը սովորում է ոչ թե միայն final image distribution-ը, այլ նաև editing process-ը։ Այդպիսի համակարգը կարող է լինել ավելի վերահսկելի, debug-friendly և user-editable։
+
+% ------------------------------------------------------------
+\chapter{ՀԻՄՆԱԽՆԴՐԻ ՎԵՐԼՈՒԾՈՒԹՅՈՒՆ ԵՎ ՏԵՍԱԿԱՆ ՀԻՄՔԵՐ}
+
+\section{Image manipulation խնդրի ընդհանուր նկարագրությունը}
+
+Image manipulation-ը ներառում է այնպիսի գործողություններ, որոնց միջոցով գոյություն ունեցող image-ը փոփոխվում է ըստ օգտատիրոջ նպատակի։ Այդ փոփոխությունները կարող են լինել local կամ global։ Local գործողությունների օրինակներ են՝ object-ի վրա moustache նկարելը, logo blur անելը, face-ի որոշ հատվածը deform անելը կամ որոշակի հատվածում text ավելացնելը։ Global գործողությունների օրինակներ են՝ ամբողջ image-ի brightness, contrast, saturation կամ color tone փոփոխելը։
+
+Դասական image editing համակարգերում այս գործողությունները կատարվում են explicit tools-ով։ Օգտատերը ընտրում է brush, eraser, clone stamp, blur tool կամ color adjustment parameter, և յուրաքանչյուր քայլ անմիջապես փոխում է canvas-ը։ \Eng{AI}-ի վրա հիմնված systems-ում, հակառակը, հաճախ օգտագործվում է instruction-to-image կամ image-to-image մոտեցում, որտեղ մոդելը սովորում է վերջնական image distribution-ը։ Այդ մոտեցումը կարող է տալ բարձր որակի արդյունքներ, սակայն այն միշտ չէ, որ ապահովում է ամբողջական control։
+
+Այս աշխատանքի համար կարևոր է հետևյալ դիտարկումը․ եթե image editing-ը ներկայացվում է որպես action sequence, ապա ամեն քայլ ունի բացատրելի իմաստ։ Օրինակ՝ հետևյալ JSON-ը արդեն նկարագրում է ոչ թե վերջնական image-ը, այլ այն գործողությունը, որը պետք է կիրառել.
+
+\begin{lstlisting}[style=code]
+{"actions":[{"action_type":"brush","color_rgba":[0,0,0,255],
+"stroke_size":8,"start_point":[90,120],"end_point":[140,130]}]}
+\end{lstlisting}
+
+Այսպիսի representation-ը կարող է ստուգվել, սահմանափակվել canvas-ի չափերով, պահվել որպես training target և deterministic կերպով վերարտադրվել։
+
+\section{Action-based editing մոտեցման առավելությունները}
+
+Action-based editing մոտեցումը ունի մի քանի կարևոր առավելություն։ Նախ, այն դարձնում է model output-ը structured։ Փոխանակ մոդելը արտադրի arbitrary text կամ image, այն պետք է վերադարձնի valid JSON, որտեղ յուրաքանչյուր action ունի action type և համապատասխան parameters։ Սա թույլ է տալիս օգտագործել validation layer, որը սխալ կամ վտանգավոր output-ը կարող է մերժել կամ փոխարինել noop action-ով։
+
+Երկրորդ, action-based մոտեցումը պահպանում է edit trace-ը։ Եթե վերջնական result-ը լավ չէ, հնարավոր է տեսնել, թե որ action-ն է սխալ եղել՝ սխալ color, սխալ point, սխալ brush size կամ սխալ tool selection։ Սա մեծ առավելություն է research prototype-ի համար, որովհետև համակարգը ավելի հեշտ է debug անել։
+
+Երրորդ, action sequence-ը մոտեցնում է model-ի աշխատանքը մարդու editing process-ին։ Մարդը image editor-ում նույնպես աշխատում է գործիքներով և քայլերով։ Այս similarity-ն հնարավորություն է տալիս data collection-ը կազմակերպել user demonstrations-ի միջոցով։ Այս աշխատանքի annotation tool-ը հենց այդ նպատակն ունի․ այն գրանցում է user-ի գործողությունները, որպեսզի դրանք հետագայում օգտագործվեն որպես model training target։
+
+\section{Vision-language-action ձևակերպումը}
+
+Այս աշխատանքում խնդիրը ձևակերպվում է որպես \Eng{vision-language-action} mapping։ Յուրաքանչյուր training sample ունի երեք հիմնական բաղադրիչ.
+\begin{enumerate}
+    \item input image կամ canvas state,
+    \item natural language instruction,
+    \item target action chunk՝ JSON action sequence-ի տեսքով։
+\end{enumerate}
+
+Եթե canvas-ը նշանակենք $I_t$, instruction-ը՝ $u$, իսկ model-ը՝ $f_\theta$, ապա model-ի խնդիրը կարելի է գրել հետևյալ կերպ.
+\begin{equation}
+    \hat{A}_t = f_\theta(I_t, u),
+\end{equation}
+որտեղ $\hat{A}_t$-ն model-ի կողմից կանխատեսված action chunk-ն է։ Այնուհետև deterministic executor-ը կիրառում է այդ գործողությունները.
+\begin{equation}
+    I_{t+1} = E(I_t, \hat{A}_t),
+\end{equation}
+որտեղ $E$-ն canvas executor-ն է։ Այսպիսով, image manipulation-ը դառնում է iterative process՝ observe, predict, execute և reobserve քայլերով։
+
+\section{Օգտագործված հիմնական տեխնոլոգիական գաղափարները}
+
+Աշխատանքում օգտագործվում են մի քանի հիմնական գաղափարներ։ \Eng{Ramer--Douglas--Peucker} algorithm-ը կիրառվում է raw stroke trajectory-ների compression-ի համար։ \Eng{LoRA} և \Eng{QLoRA} մոտեցումները կիրառվում են large model fine-tuning-ը resource-efficient դարձնելու համար \cite{Hu2022,Dettmers2023}։ \Eng{Supervised Fine-Tuning} փուլում մոդելը սովորում է ground-truth actions-ը, իսկ reward-based training փուլում գնահատվում է այն, թե generated actions-ը որքանով են մոտեցնում canvas-ը target edit-ին։
+
+Այս գաղափարների համադրությունը թույլ է տալիս կառուցել ոչ թե պարզապես նկարչական program, այլ full pipeline՝ data collection-ից մինչև model inference։
+
+% ------------------------------------------------------------
+\chapter{ՀԱՄԱԿԱՐԳԻ ՆԱԽԱԳԾՈՒՄԸ ԵՎ ՃԱՐՏԱՐԱՊԵՏՈՒԹՅՈՒՆԸ}
+
+\section{Ընդհանուր ճարտարապետություն}
+
+\Eng{AI Image Manipulation} համակարգը կառուցված է modular architecture սկզբունքով։ Համակարգի հիմնական components-ն են՝ annotation tool, raw data storage, data preparation pipeline, action schema, deterministic canvas executor, training module և inference module։ Այս բաժանումը կարևոր է, քանի որ յուրաքանչյուր component լուծում է առանձին խնդիր և կարող է independently փոփոխվել կամ կատարելագործվել։
+
+\begin{table}[H]
+\caption{Համակարգի հիմնական components-ը}
+\centering
+\begin{tabularx}{\textwidth}{p{4cm}X}
+\toprule
+\textbf{Component} & \textbf{Դերը համակարգում} \\
+\midrule
+\Eng{Annotation tool} & Օգտատերը կատարում է image editing գործողություններ, իսկ համակարգը պահպանում է frames և operation logs։ \\
+\Eng{Action schema} & Սահմանում է, թե ինչ կառուցվածք պետք է ունենան brush, fill, eraser, color adjustment և այլ actions-ը։ \\
+\Eng{Data pipeline} & Raw sessions-ը վերածում է compressed strokes-ի, action chunks-ի և training dataset-ի։ \\
+\Eng{Canvas executor} & Կիրառում է action sequence-ը canvas-ի վրա deterministic կերպով։ \\
+\Eng{Training module} & Իրականացնում է \Eng{QLoRA SFT} և reward-based \Eng{GRPO} training։ \\
+\Eng{Inference module} & Կատարում է observe--predict--execute--reobserve loop։ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Համակարգի workflow-ը կարելի է ներկայացնել հետևյալ հաջորդականությամբ.
+\begin{enumerate}
+    \item օգտատերը ընտրում է image և annotation tool-ում կատարում է edit,
+    \item tool-ը պահպանում է canvas snapshots և գործողությունների JSON log,
+    \item raw logs-ը preprocess են արվում՝ compression և chunking քայլերով,
+    \item chunks-ը վերածվում է vision-language chat-format dataset-ի,
+    \item model-ը fine-tune է արվում՝ կանխատեսելու action chunks,
+    \item inference-ի ժամանակ model-ի output-ը validate և execute է արվում canvas-ի վրա։
+\end{enumerate}
+
+\section{Annotation tool-ի դերը}
+
+Annotation tool-ը համակարգի հիմքային մասն է, որովհետև առանց ճիշտ training data-ի model-ը չի կարող սովորել օգտատիրոջ instruction-ից editing actions կանխատեսել։ Tool-ը կառուցված է \Eng{Pygame}-ի վրա և թույլ է տալիս աշխատել image canvas-ի հետ։ Image-ը բեռնվում և resize է արվում fixed canvas size-ի, ինչն անհրաժեշտ է action coordinates-ի consistency-ի համար։
+
+Tool-ի հիմնական առանձնահատկությունն այն է, որ այն պահպանում է ոչ միայն final image-ը, այլ նաև edit process-ը։ Երբ canvas-ը փոխվում է, համակարգը պահպանում է frame, իսկ exit-ի ժամանակ պահպանում է ամբողջ session-ի operations-ը։ Յուրաքանչյուր operation record պարունակում է timestamp, frame id, tool name, size, color, start position և end position կամ տվյալ action-ին հատուկ parameters։
+
+\begin{table}[H]
+\caption{Annotation tool-ում օգտագործվող հիմնական tools-ը}
+\centering
+\begin{tabularx}{\textwidth}{p{3.5cm}X}
+\toprule
+\textbf{Tool} & \textbf{Գործառույթ} \\
+\midrule
+\Eng{Brush} & Նկարում է ընտրված color-ով, size-ով և hardness-ով։ \\
+\Eng{Pencil} & Կատարում է 1px կամ շատ բարակ drawing։ \\
+\Eng{Eraser} & Վերականգնում է original image-ի pixels-ը ընտրված հատվածում։ \\
+\Eng{Fill} & Կատարում է flood fill ընտրված point-ից։ \\
+\Eng{Picker} & Ընտրում է color-ը canvas-ի pixel-ից։ \\
+\Eng{Color adjust} & Փոխում է brightness, exposure, contrast, highlights, shadows, saturation, hue shift և temperature parameters-ը։ \\
+\Eng{Text overlay} & Ավելացնում է text ընտրված position-ում։ \\
+\Eng{Gaussian blur} & Blur է անում image-ը կամ դրա հատվածները։ \\
+\Eng{Clone stamp} & Պատճենում է source region-ը destination region-ում։ \\
+\Eng{Forward warp} & Deform է անում image-ի հատվածը drag trajectory-ի ուղղությամբ։ \\
+\Eng{Scatter brush} & Stroke-ի երկայնքով ցրում է stamp shapes (circle, leaf, star, triangle, dash)՝ ընտրված color-ով, size-ով, density-ով և scatter radius-ով։ \\
+\Eng{Pattern brush} & Stroke-ի երկայնքով հավասարաչափ spacing-ով դասավորում է stamp shapes՝ ընտրված color-ով և angle jitter-ով։ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Action schema-ի պահանջները}
+
+Action schema-ն սահմանում է model output-ի grammar-ը։ Եթե schema չլինի, model-ը կարող է վերադարձնել ազատ text, որը դժվար է execute անել։ Այս աշխատանքում actions-ը ներկայացվում են typed objects-ի միջոցով։ Յուրաքանչյուր action ունի \Eng{action\_type} field, որը որոշում է մնացած fields-ը։ Օրինակ՝ brush action-ը պետք է ունենա color, stroke size, start point, end point և hardness, մինչդեռ fill action-ը պետք է ունենա color և position։
+
+Schema validation-ը նաև սահմանում է allowed ranges։ Օրինակ՝ color channels-ը սահմանափակվում են $[0,255]$ միջակայքով, coordinates-ը պետք է լինեն canvas-ի սահմաններում, իսկ stroke size-ը չի կարող լինել բացասական կամ շատ մեծ։ Սա կարևոր է, քանի որ model output-ը միշտ չէ, որ կատարյալ valid է։ Validation layer-ը պաշտպանում է executor-ը սխալ input-ից։
+
+\begin{table}[H]
+\caption{Action schema-ի օրինակներ}
+\centering
+\begin{tabularx}{\textwidth}{p{3.5cm}X}
+\toprule
+\textbf{Action type} & \textbf{Հիմնական fields} \\
+\midrule
+\Eng{brush} & \Eng{color\_rgba}, \Eng{stroke\_size}, \Eng{start\_point}, \Eng{end\_point}, \Eng{hardness} \\
+\Eng{pencil} & \Eng{color\_rgba}, \Eng{start\_point}, \Eng{end\_point} \\
+\Eng{eraser} & \Eng{stroke\_size}, \Eng{start\_point}, \Eng{end\_point} \\
+\Eng{fill} & \Eng{color\_rgba}, \Eng{position} \\
+\Eng{color\_adjust} & \Eng{brightness}, \Eng{contrast}, \Eng{saturation}, \Eng{exposure}, \Eng{highlights}, \Eng{shadows}, \Eng{hue\_shift}, \Eng{temperature} \\
+\Eng{text\_overlay} & \Eng{text}, \Eng{position}, \Eng{font\_name}, \Eng{font\_size}, \Eng{color\_rgba}, \Eng{thickness} \\
+\Eng{forward\_warp} & \Eng{start\_point}, \Eng{end\_point}, \Eng{size}, \Eng{strength} \\
+\Eng{scatter\_brush} & \Eng{shape}, \Eng{color\_rgba}, \Eng{start\_point}, \Eng{end\_point}, \Eng{size}, \Eng{density}, \Eng{scatter} \\
+\Eng{pattern\_brush} & \Eng{shape}, \Eng{color\_rgba}, \Eng{start\_point}, \Eng{end\_point}, \Eng{size}, \Eng{spacing}, \Eng{angle\_jitter} \\
+\Eng{noop} & Գործողություն չի կատարում և կարող է նշել completion։ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Տվյալների պահման կառուցվածքը}
+
+Տվյալների պահման կառուցվածքը բաժանված է raw, interim և processed մակարդակների։ Raw մակարդակում պահվում են session JSON logs և canvas frames։ Interim մակարդակում պահվում են compressed action sequences և chunks։ Processed մակարդակում պահվում է final \Eng{HuggingFace Dataset}, որը կարող է անմիջապես օգտագործվել training-ի համար։
+
+Այսպիսի structure-ը համապատասխանում է reproducible machine learning project-ի պահանջներին։ Եթե որևէ preprocessing parameter փոխվում է, օրինակ \Eng{RDP epsilon} կամ action horizon, հնարավոր է ամբողջ pipeline-ը կրկին աշխատեցնել raw data-ից։
+
+% ------------------------------------------------------------
+\chapter{ՏՎՅԱԼՆԵՐԻ ՀԱՎԱՔՈՒՄ ԵՎ ՆԱԽԱՄՇԱԿՈՒՄ}
+
+\section{Raw session logs}
+
+Annotation-ի ընթացքում համակարգը գրանցում է user-ի գործողությունները որպես raw operations։ Այս operations-ը կարող են լինել շատ մանրամասն, քանի որ mouse movement-ը կարող է գրանցվել բազմաթիվ փոքր segments-ներով։ Օրինակ՝ երկար brush stroke-ը կարող է raw log-ում ներկայացվել հարյուրավոր մոտիկ start/end point pairs-ով։ Training-ի համար սա ցանկալի չէ, քանի որ այդպիսի representation-ը երկար է, redundant և դժվար է մոդելի համար։
+
+Raw session-ը սովորաբար պարունակում է հետևյալ structure-ը.
+\begin{lstlisting}[style=code]
+{
+  "image_name": "example",
+  "image_path": "data/raw/images/example.jpg",
+  "canvas_size": 256,
+  "total_frames": 120,
+  "duration_s": 34.6,
+  "operations": [ ... ]
+}
+\end{lstlisting}
+
+Յուրաքանչյուր operation-ը պահպանում է նվազագույն անհրաժեշտ metadata, որպեսզի հետագայում հնարավոր լինի վերականգնել edit process-ը։ Սակայն raw format-ը դեռ training-ready չէ։ Այն պետք է անցնի compression, chunking և formatting փուլերով։
+
+\section{Trajectory compression}
+
+Trajectory compression-ի նպատակն է raw mouse movement-ը դարձնել ավելի compact action representation։ Այս աշխատանքի մեջ օգտագործվում է \Eng{Ramer--Douglas--Peucker} algorithm-ը, որը polyline-ը մոտարկում է ավելի քիչ control points-ով՝ պահպանելով հիմնական երկրաչափական ձևը \cite{Ramer1972,DouglasPeucker1973}։
+
+Եթե raw trajectory-ն նշանակենք $P=(p_1,p_2,\ldots,p_n)$, ապա algorithm-ը վերադարձնում է compressed trajectory $\tilde{P}=(\tilde{p}_1,\ldots,\tilde{p}_m)$, որտեղ $m \ll n$։ Compression-ի tolerance parameter-ը նշանակենք $\varepsilon$։ Որքան մեծ է $\varepsilon$-ը, այնքան ավելի ուժեղ է compression-ը, բայց այնքան ավելի մեծ կարող է լինել trajectory-ի approximation error-ը։
+
+Այս աշխատանքում compression-ը կատարում է երկու գործառույթ։ Նախ՝ այն կրճատում է training target-ի երկարությունը։ Երկրորդ՝ այն raw mouse noise-ը հեռացնում է և պահպանում է stroke-ի հիմնական structure-ը։ Հետագայում compressed trajectory-ն բաժանվում է consecutive segments-ի, և յուրաքանչյուր segment դառնում է առանձին action՝ start point և end point fields-ով։
+
+\section{Action chunking}
+
+Model-ը մեկ inference step-ում չի կանխատեսում ամբողջ session-ի բոլոր actions-ը։ Փոխարենը, այն կանխատեսում է fixed horizon ունեցող action chunk։ Այս action horizon գաղափարի ընտրության վրա ազդել է նաև \Eng{openpi} project-ը, որտեղ \Eng{vision-language-action} policy-ն inference-ի ժամանակ վերադարձնում է actions-ի chunk, այլ ոչ թե մեկ isolated action \cite{OpenPI}։ Եթե horizon-ը $H$ է, ապա յուրաքանչյուր training target ունի $H$ action։ Եթե session-ում actions-ի քանակը բավարար չէ, sequence-ը լրացվում է noop actions-ով։
+
+Sliding window chunking-ը կառուցվում է հետևյալ կերպ։ Թող compressed actions-ը լինեն
+\begin{equation}
+    A = (a_1,a_2,\ldots,a_N).
+\end{equation}
+Այնուհետև $i$-րդ chunk-ը սահմանվում է որպես
+\begin{equation}
+    C_i = (a_i,a_{i+1},\ldots,a_{i+H-1}).
+\end{equation}
+Եթե $i+H-1>N$, ապա բացակա actions-ը փոխարինվում են noop-ով։ Այս ձևակերպումը մեծացնում է training samples-ի քանակը և թույլ է տալիս model-ին սովորել local decision making։
+
+\section{Instruction mapping}
+
+Յուրաքանչյուր session կապված է manual instruction-ի հետ։ Օրինակ՝ dataset-ում կարող են լինել instructions՝ \Eng{``draw a sun in top left corner''}, \Eng{``blur the faces of the soldiers''}, \Eng{``draw strong and thick mustache on man's face''}, \Eng{``deform the strawberry to look like a heart''} և այլն։ Այս mapping-ը կարևոր է, որովհետև model-ը պետք է սովորի կապել visual context-ը և instruction-ը համապատասխան actions-ի հետ։
+
+Instruction mapping-ը նաև ցույց է տալիս, որ համակարգը նախատեսված է տարբեր տեսակի tasks-ի համար՝ drawing, blurring, color adjustment, deformation, text overlay և semantic face editing։ Սակայն տվյալների քանակը դեռ սահմանափակ է, ուստի այս աշխատանքում համակարգը դիտարկվում է որպես research prototype, ոչ թե production-ready general image editor։
+
+\section{Training dataset-ի ձևավորում}
+
+Processed dataset-ը կառուցվում է chat-template ձևաչափով։ Յուրաքանչյուր sample ունի system message, user message և assistant message։ System message-ը սահմանում է, որ model-ը պետք է վերադարձնի միայն JSON object՝ որոշակի action count-ով։ User message-ը պարունակում է image token և natural language instruction։ Assistant message-ը պարունակում է target action JSON։
+
+Այս structure-ը համապատասխանում է vision-language model fine-tuning-ի տրամաբանությանը։ Training-ի ընթացքում model-ը սովորում է input image և instruction-ից կանխատեսել assistant message-ը։ Այս դեպքում assistant message-ը text է, բայց այդ text-ը structured action sequence է, որը հետագայում կարող է parse և execute արվել։
+
+% ------------------------------------------------------------
+\chapter[Canvas executor և գործողություններ]{DETERMINISTIC CANVAS EXECUTOR ԵՎ ԳՈՐԾՈՂՈՒԹՅՈՒՆՆԵՐԻ ՄԱԹԵՄԱՏԻԿԱԿԱՆ ՆԿԱՐԱԳՐՈՒԹՅՈՒՆԸ}
+
+\section{Executor-ի դերը}
+
+Deterministic canvas executor-ը համակարգի այն component-ն է, որը action sequence-ը վերածում է actual image change-ի։ Այն ստանում է canvas-ը որպես NumPy array և sequential կերպով կիրառում է actions-ը։ Executor-ի deterministic լինելը կարևոր է, որովհետև նույն input canvas-ը և նույն action chunk-ը պետք է միշտ տան նույն output canvas-ը։ Սա անհրաժեշտ է ինչպես training target-ի վերարտադրության, այնպես էլ reward calculation-ի համար։
+
+Canvas-ը ներկայացվում է որպես RGB image՝ float32 values $[0,1]$ միջակայքում։ Իսկ OpenCV drawing operations-ի համար անհրաժեշտության դեպքում image-ը փոխարկվում է uint8 format-ի։ Այս conversion-ը սովորական տեխնիկական քայլ է computer vision համակարգերում \cite{GonzalezWoods2018,Szeliski2022}։
+
+\section{Alpha blending}
+
+Brush, pencil, fill և text overlay գործողությունները հիմնականում օգտագործում են alpha blending։ Եթե $I$-ն canvas image-ն է, $C$-ն ընտրված color-ը, $M$-ը mask-ն է, իսկ $\alpha$-ն opacity-ն, ապա updated pixel-ը կարելի է գրել հետևյալ կերպ.
+\begin{equation}
+    I'(x,y) = (1 - \alpha M(x,y))I(x,y) + \alpha M(x,y)C.
+\end{equation}
+Այստեղ $M(x,y)\in[0,1]$ ցույց է տալիս, թե տվյալ pixel-ը որքանով է ծածկված brush-ի կամ shape-ի կողմից։ Եթե $M(x,y)=0$, pixel-ը չի փոխվում, իսկ եթե $M(x,y)=1$, color-ը կիրառվում է ամբողջությամբ՝ կախված opacity-ից։
+
+Այս formula-ն թույլ է տալիս նույն կերպ նկարագրել brush-ի, fill-ի և text-ի rendering-ը։ Տարբերությունը միայն mask-ի կառուցման եղանակն է։ Brush-ի դեպքում mask-ը կախված է stroke segment-ից և hardness-ից, fill-ի դեպքում՝ flood-filled region-ից, իսկ text overlay-ի դեպքում՝ text glyph mask-ից։
+
+\section{Brush և hardness}
+
+Brush action-ը ունի stroke size և hardness parameters։ Hardness-ը որոշում է mask-ի եզրերի softness-ը։ Եթե hardness-ը $100$ է, mask-ը կոշտ է՝ pixel-ը կամ ամբողջությամբ ծածկված է, կամ ոչ։ Եթե hardness-ը փոքր է, mask-ը radial falloff ունի։
+
+Թող $r$ լինի brush radius-ը, իսկ $d$՝ pixel-ի հեռավորությունը stroke segment-ից։ Եթե hardness fraction-ը նշանակենք $h\in[0,1]$, ապա core region-ը մոտավորապես $d\leq hr$ է։ Այդ հատվածում weight-ը հավասար է 1-ի։ Իսկ $hr<d\leq r$ միջակայքում weight-ը աստիճանաբար փոքրանում է։ Սա տալիս է smoother brush stroke և ավելի բնական drawing։
+
+\section{Eraser գործողությունը}
+
+Eraser action-ը սովորական drawing action չէ։ Այն չի ներկում canvas-ը background color-ով, այլ վերականգնում է original image-ի pixels-ը տվյալ mask-ի ներսում։ Եթե $I_0$-ն original image-ն է, ապա eraser-ի համար
+\begin{equation}
+    I'(x,y) =
+    \begin{cases}
+    I_0(x,y), & M(x,y)>0,\\
+    I(x,y), & M(x,y)=0.
+    \end{cases}
+\end{equation}
+Այս մոտեցումը ավելի ճիշտ է image editing-ի համար, քանի որ eraser-ը իրականում պետք է undo անի local modifications-ը, ոչ թե պարզապես սպիտակ գույնով ներկի հատվածը։
+
+\section{Flood fill}
+
+Fill action-ը օգտագործում է flood fill algorithm։ Այն սկսվում է user-ի ընտրած point-ից և տարածվում է հարևան pixels-ի վրա, եթե դրանց color difference-ը գտնվում է սահմանված tolerance-ի մեջ։ Այսպիսով ստացվում է region mask, որի վրա կիրառվում է alpha blending։ Fill action-ը օգտակար է այն դեպքերում, երբ անհրաժեշտ է փոխել փակ կամ համեմատաբար homogeneous region-ի color-ը։
+
+\section{Color adjustment}
+
+Color adjustment action-ը global operation է, որը կարող է փոխել brightness, exposure, contrast, saturation, highlights, shadows, hue shift և temperature parameters-ը։ Պարզեցված ձևով brightness և contrast փոփոխությունը կարելի է գրել հետևյալ կերպ.
+\begin{equation}
+    I_b = I + \frac{\beta}{255},
+\end{equation}
+որտեղ $\beta$-ն brightness parameter-ն է։ Contrast-ի համար օգտագործվում է mean-centered transformation.
+\begin{equation}
+    I_c = (I_b - \bar{I}_b)\gamma + \bar{I}_b,
+\end{equation}
+որտեղ $\gamma$-ն contrast factor-ն է։ Saturation-ի համար image-ը փոխարկվում է HSV color space, և saturation channel-ը բազմապատկվում է համապատասխան coefficient-ով։
+
+\section{Forward warp}
+
+Forward warp action-ը local deformation tool է։ Այն օգտագործում է trajectory-ի ուղղությունը և radius-ը՝ pixels-ի sampling map-ը փոխելու համար։ Եթե օգտատերը drag է անում point-ը մի ուղղությամբ, ապա nearby pixels-ը տեղափոխվում են այդ ուղղությամբ, իսկ ազդեցությունը փոքրանում է distance-ի աճի հետ։ Weight-ը կարող է նկարագրվել հետևյալ ձևով.
+\begin{equation}
+    w(d)=\left(1-\frac{d^2}{r^2}\right)^2_+,
+\end{equation}
+որտեղ $d$-ն pixel-ի հեռավորությունն է local deformation center-ից, $r$-ը radius-ն է, իսկ $(\cdot)_+$ նշանակում է non-negative clipping։ Այսպիսի deformation-ը կարող է օգտագործվել face shape կամ object shape փոքր փոփոխությունների համար։
+
+\section{Noop և completion}
+
+Noop action-ը հատուկ action է, որը ոչինչ չի փոխում canvas-ի վրա։ Եթե model-ը վերադարձնում է ամբողջությամբ noop actions-ով chunk, inference loop-ը կարող է դա մեկնաբանել որպես completion signal։ Սա կարևոր է, որովհետև system-ը պետք է իմանա, թե երբ դադարեցնել editing process-ը։
+
+% ------------------------------------------------------------
+\chapter{MODEL TRAINING ԵՎ INFERENCE PIPELINE}
+
+\section{Model-ի input և output}
+
+Model-ը ստանում է երկու տեսակի input՝ current canvas image և natural language instruction։ Output-ը պետք է լինի JSON object, որը պարունակում է fixed number of actions։ System prompt-ը model-ին պարտադրում է վերադարձնել միայն valid JSON։ Այս constraint-ը կարևոր է, որովհետև inference-ի ընթացքում output-ը անմիջապես փոխանցվում է parser-ին և executor-ին։
+
+Training target-ի օրինակն ունի հետևյալ տեսքը.
+\begin{lstlisting}[style=code]
+{
+  "actions": [
+    {"action_type":"brush","color_rgba":[255,0,0,255],
+     "stroke_size":5,"start_point":[40,60],"end_point":[90,80]},
+    {"action_type":"noop"}
+  ]
+}
+\end{lstlisting}
+
+Այս օրինակում horizon-ը հավասար է 2-ի։ Եթե իրական edit-ը ավարտվել է մեկ action-ով, երկրորդ action-ը լրացվում է noop-ով։
+
+\section{Supervised fine-tuning}
+
+Առաջին training փուլը \Eng{Supervised Fine-Tuning} է։ Այս փուլում model-ը սովորում է annotation data-ից ստացված ground-truth actions-ը։ Loss-ը հաշվարկվում է assistant tokens-ի վրա, այսինքն՝ model-ը հիմնականում սովորում է output JSON-ը, ոչ թե կրկին գեներացնում input prompt-ը։
+
+Resource constraints-ի պատճառով օգտագործվում է \Eng{QLoRA} մոտեցում։ \Eng{LoRA}-ն fine-tuning-ի ժամանակ սովորում է ցածր rank ունեցող adapter matrices՝ փոխարենը ամբողջ model-ի բոլոր parameters-ը փոխելու \cite{Hu2022}։ \Eng{QLoRA}-ն լրացուցիչ օգտագործում է quantization, որպեսզի large model fine-tuning-ը հնարավոր լինի ավելի փոքր GPU memory-ով \cite{Dettmers2023}։ Այս աշխատանքի configuration-ում օգտագործվում են 4-bit loading, LoRA rank $r=16$, alpha $32$, dropout $0.05$, և language/attention/MLP modules-ի fine-tuning։
+
+\section{Training configuration}
+
+Training configuration-ը պահվում է YAML file-ում, ինչը թույլ է տալիս experiments-ը կրկնել և parameters-ը հեշտ փոփոխել։ Օրինակ՝ configuration-ը ներառում է model name, LoRA settings, batch size, gradient accumulation, learning rate, epochs, max sequence length, dataset path և RL settings։
+
+\begin{table}[H]
+\caption{Training configuration-ի հիմնական parameters-ը}
+\centering
+\begin{tabularx}{\textwidth}{p{5cm}X}
+\toprule
+\textbf{Parameter} & \textbf{Արժեք / նկարագրություն} \\
+\midrule
+\Eng{model.name} & \Eng{Qwen/Qwen3.5-4B}՝ ըստ project configuration-ի։ \\
+\Eng{load\_in\_4bit} & True, model-ը բեռնվում է 4-bit quantization-ով։ \\
+\Eng{LoRA r} & 16։ \\
+\Eng{LoRA alpha} & 32։ \\
+\Eng{batch size} & 4՝ gradient accumulation-ի հետ։ \\
+\Eng{learning rate} & $10^{-4}$ SFT-ի համար։ \\
+\Eng{action horizon} & 2՝ մեկ model output-ում երկու action։ \\
+\Eng{RDP epsilon} & 2.0՝ trajectory compression-ի համար։ \\
+\Eng{train split} & 0.8։ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Reward-based training}
+
+SFT-ից հետո համակարգը նախատեսում է reward-based training փուլ՝ \Eng{GRPO} trainer-ի միջոցով։ Այս փուլում model-generated actions-ը execute են արվում canvas-ի վրա, այնուհետև resulting canvas-ը համեմատվում է ground-truth next canvas-ի հետ։ Այս մոտեցումը կարևոր է, որովհետև model-ի output-ը կարող է syntactically ճիշտ լինել, բայց visually սխալ։ Reward-ը չափում է final visual effect-ը։
+
+Այս աշխատանքի reward function-ը կենտրոնանում է ground-truth changed region-ի վրա։ Եթե $I$-ն current canvas-ն է, $T$-ն ground-truth target canvas-ը, իսկ $P$-ն predicted actions-ի execute-ից ստացված canvas-ը, ապա ground-truth changed region mask-ը սահմանվում է հետևյալ կերպ.
+\begin{equation}
+    M(x,y)=\mathbf{1}\left\{\max_c |T_c(x,y)-I_c(x,y)|>\delta\right\},
+\end{equation}
+իսկ model-ի predicted changes-ի mask-ը՝
+\begin{equation}
+    \hat{M}(x,y)=\mathbf{1}\left\{\max_c |P_c(x,y)-I_c(x,y)|>\delta\right\}.
+\end{equation}
+Reward-ը հաշվարկվում է երեք բաղադրիչի միջոցով.
+\begin{align}
+    \mathrm{coverage} &= \frac{|\hat{M} \cap M|}{|M|}, \\
+    \mathrm{accuracy} &= 1 - \frac{1}{|M|}\sum_{(x,y)\in M}\left|P(x,y)-T(x,y)\right|, \\
+    \mathrm{spurious} &= \frac{1}{|\overline{M}|}\sum_{(x,y)\notin M}\left|P(x,y)-I(x,y)\right|,
+\end{align}
+որից ստացվում է վերջնական reward-ը.
+\begin{equation}
+    r = \mathrm{clamp}\!\left(\mathrm{coverage}\times\mathrm{accuracy} - 0.1\cdot\mathrm{spurious},\;-1,\;1\right).
+\end{equation}
+Coverage factor-ն ապահովում է, որ noop prediction-ի դեպքում ($\hat{M}=\varnothing$) reward-ը միշտ $\leq 0$ լինի, այսինքն՝ model-ը չի կարող «ոչինչ չանելու» ռազմավարությամբ դրական reward ստանալ։ Accuracy-ն գնահատում է pixel-level ճշտությունը changed region-ի ներսում, իսկ spurious penalty-ն պատժում է changed region-ից դուրս կատարված ավելորդ փոփոխությունները։
+
+\section{Inference loop}
+
+Inference-ի ժամանակ system-ը աշխատում է iterative loop-ով։ Սկզբում input image-ը resize է արվում canvas size-ի, այնուհետև model-ը ստանում է current canvas և instruction։ Model-ը վերադարձնում է action chunk։ Parser-ը փորձում է extract անել balanced JSON object, validate է անում actions-ը, իսկ invalid actions-ը կարող է մերժել։ Valid action chunk-ը փոխանցվում է executor-ին։
+
+Այս process-ը շարունակվում է մինչև երկու պայմաններից մեկը կատարվի․ model-ը վերադարձնում է all-noop chunk, կամ loop-ը հասնում է max chunks limit-ին։ Այսպիսի stopping mechanism-ը անհրաժեշտ է, որպեսզի model-ը չշարունակի անսահմանափակ գործողություններ կատարել։
+
+Inference loop-ը կարելի է ներկայացնել հետևյալ pseudo-code-ով.
+
+\begin{lstlisting}[style=code]
+canvas = input_image
+for step in range(max_chunks):
+    chunk = model.predict(canvas, instruction)
+    chunk = parse_and_validate(chunk)
+    if chunk.is_terminal():
+        break
+    canvas = execute_chunk(canvas, chunk)
+return canvas
+\end{lstlisting}
+
+\section{JSON parsing և safety}
+
+Model-generated text-ը միշտ չէ, որ ideal JSON է։ Այդ պատճառով action parsing module-ը նախ փնտրում է առաջին balanced JSON object-ը output text-ի մեջ, հետո փորձում է parse անել այն։ Եթե որոշ actions invalid են, դրանք կարող են skipped լինել, իսկ եթե ամբողջ chunk-ը invalid է, system-ը կարող է վերադարձնել noop chunk կամ error։ Սա practical safety layer է, որը պաշտպանում է executor-ը malformed model output-ից։
+
+% ------------------------------------------------------------
+\chapter{ԻՐԱԿԱՆԱՑՄԱՆ ԱՐԴՅՈՒՆՔՆԵՐԸ ԵՎ ՎԵՐԼՈՒԾՈՒԹՅՈՒՆԸ}
+
+\section{Իրականացված համակարգային արդյունքները}
+
+Այս աշխատանքի արդյունքում ստեղծվել է \Eng{AI Image Manipulation} research prototype, որը ներառում է image annotation, action logging, data preprocessing, deterministic execution, model training և inference components։ Թեև project-ը դեռ կարող է պահանջել ավելի մեծ dataset և վերջնական quantitative evaluation, implementation-ի մակարդակում հիմնական pipeline-ը նախագծված և կառուցված է։
+
+\begin{table}[H]
+\caption{Իրականացված հիմնական արդյունքները}
+\centering
+\begin{tabularx}{\textwidth}{p{5cm}X}
+\toprule
+\textbf{Արդյունք} & \textbf{Նկարագրություն} \\
+\midrule
+\Eng{Annotation tool} & Օգտատերը կարող է image-ի վրա կատարել տարբեր editing actions, իսկ system-ը պահպանում է frames և JSON logs։ \\
+\Eng{Action schema} & Սահմանվել են brush, pencil, eraser, fill, color adjustment, text overlay, gaussian blur, clone stamp, scatter brush, pattern brush, forward warp և noop actions։ \\
+\Eng{Data pipeline} & Raw sessions-ը անցնում են compression, chunking և HuggingFace dataset formatting փուլերով։ \\
+\Eng{Canvas executor} & Action chunks-ը deterministic կերպով կիրառվում են NumPy/OpenCV canvas-ի վրա։ \\
+\Eng{SFT training} & Նախագծվել է QLoRA supervised fine-tuning pipeline։ \\
+\Eng{Reward training} & Նախագծվել է visual reward-ի վրա հիմնված GRPO training pipeline։ \\
+\Eng{Inference} & Իրականացվել է observe--predict--execute--reobserve loop։ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Dataset-ի բնույթը}
+
+Collected tasks-ը տարբեր են և ներառում են drawing, blur, color adjustment, deformation և face editing instructions։ Օրինակ՝ dataset-ում կան հետևյալ task types-ը.
+\begin{itemize}
+    \item moustache կամ beard նկարել face-ի վրա,
+    \item logo կամ faces blur անել,
+    \item image-ը black and white կամ dusk-like դարձնել,
+    \item white canvas-ի վրա sun, house, sky/ground/clouds նկարել,
+    \item strawberry shape-ը heart-ի նման deform անել,
+    \item face expression-ը smile կամ sad դարձնել,
+    \item car windshield-ի վրա eyes նկարել։
+\end{itemize}
+
+Այս diversity-ն օգտակար է, որովհետև model-ը տեսնում է տարբեր action families։ Սակայն dataset-ի չափը դեռ սահմանափակ է։ Փոքր dataset-ի դեպքում model-ը կարող է overfit լինել կոնկրետ images-ի և instructions-ի վրա։ Այդ պատճառով այս փուլում համակարգի գլխավոր արժեքը ոչ թե generalization-ի ապացույցն է, այլ full data-to-model pipeline-ի կառուցումը։
+
+\section{Մոտեցման ուժեղ կողմերը}
+
+Առաջին ուժեղ կողմը interpretability-ն է։ Եթե output image-ը սխալ է, հնարավոր է ուսումնասիրել generated action sequence-ը և հասկանալ սխալի աղբյուրը։ Օրինակ՝ եթե moustache-ը սխալ տեղում է, կարելի է տեսնել, որ start/end coordinates-ը սխալ են։ Եթե color-ը սխալ է, color rgba field-ը կարելի է ստուգել։
+
+Երկրորդ ուժեղ կողմը controllability-ն է։ Քանի որ actions-ը structured են, հնարավոր է սահմանել constraints՝ coordinates-ի bounds, size-ի range, allowed action types և այլն։ Սա կարող է նվազեցնել unpredictable model behavior-ը։
+
+Երրորդ ուժեղ կողմը reproducibility-ն է։ Նույն action chunk-ը և նույն input canvas-ը միշտ տալիս են նույն output-ը։ Սա կարևոր է ինչպես training-ի, այնպես էլ evaluation-ի համար։
+
+\section{Սահմանափակումներ}
+
+Համակարգն ունի մի քանի սահմանափակում։ Առաջինը՝ dataset-ի չափը փոքր է և manual collected։ Ավելի general model ստանալու համար անհրաժեշտ է ավելի մեծ և բազմազան annotation dataset։ Երկրորդը՝ action space-ը սահմանափակ է այն tools-ով, որոնք արդեն իրականացված են։ Եթե user-ը տալիս է instruction, որը պահանջում է object insertion կամ semantic segmentation, բայց համապատասխան action չկա, model-ը կարող է approximation անել ոչ բավարար գործողություններով։ Երրորդը՝ որոշ tools, օրինակ forward warp կամ clone stamp, կարող են պահանջել ավելի նուրբ control, քան երկու point-ով action representation-ը թույլ է տալիս։
+
+Չորրորդ սահմանափակումը վերաբերում է quantitative evaluation-ին։ Վերջնական thesis version-ում ցանկալի է ավելացնել training loss curves, validation loss, generated samples և human evaluation կամ visual reward statistics։ Այս draft-ում numerical results չեն հորինվում, քանի որ դրանք պետք է ստացվեն իրական training run-ից։
+
+\section{Evaluation-ի առաջարկվող չափանիշներ}
+
+Հետագա experiments-ի համար կարելի է օգտագործել հետևյալ metrics-ը.
+\begin{enumerate}
+    \item \Eng{JSON validity rate}՝ model outputs-ի քանի տոկոսն է valid JSON,
+    \item \Eng{Action validity rate}՝ valid ranges ունեցող actions-ի տոկոսը,
+    \item \Eng{Visual reward}՝ predicted և target canvases-ի similarity changed region-ում,
+    \item \Eng{Edit locality}՝ որքան քիչ է փոփոխվում target region-ից դուրս,
+    \item \Eng{Human preference score}՝ օգտատերերի գնահատականը final edit-ի համար,
+    \item \Eng{Task completion rate}՝ instruction-ի հաջող կատարման տոկոսը։
+\end{enumerate}
+
+Այս metrics-ը միասին ավելի լավ են գնահատում system-ը, քան միայն pixel-level error-ը, որովհետև image manipulation-ը և՛ visual, և՛ semantic task է։
+
+% ------------------------------------------------------------
+\chapter{ՀԵՏԱԳԱ ԶԱՐԳԱՑՄԱՆ ՈՒՂՂՈՒԹՅՈՒՆՆԵՐԸ}
+
+\section{Տվյալների ընդլայնում}
+
+Ամենակարևոր հետագա քայլը dataset-ի ընդլայնումն է։ Պետք է հավաքել ավելի շատ sessions՝ տարբեր image categories-ի և editing instructions-ի համար։ Data-ն պետք է հավասարակշռված լինի tools-ի միջև։ Եթե dataset-ի մեծ մասը brush drawing է, model-ը կարող է վատ սովորել blur, clone stamp կամ warp actions-ը։ Հետևաբար անհրաժեշտ է systematized annotation plan, որտեղ յուրաքանչյուր tool ունի բավարար examples։
+
+\section{Action representation-ի բարելավում}
+
+Ներկայիս representation-ը հիմնականում segment-based է։ Սա պարզ է և հեշտ է validate անել, բայց որոշ գործողությունների համար կարող է բավարար expressive չլինել։ Օրինակ՝ complex curves-ը կարելի է ներկայացնել Bezier control points-ով, ոչ թե բազմաթիվ line segments-ով։ Text overlay-ի համար կարելի է ավելացնել alignment, rotation և opacity։ Blur-ի համար կարելի է ավելացնել local mask support։
+
+\section{Model evaluation և user study}
+
+Production-level image manipulation system-ի համար անհրաժեշտ է իրական user study։ Օգտատերերը կարող են գնահատել, թե արդյոք final edit-ը համապատասխանում է instruction-ին, արդյոք image-ի unrelated parts-ը մնացել են նույնը, և արդյոք edit-ը visually natural է։ Այս evaluation-ը հատկապես կարևոր է face editing և object deformation tasks-ի համար, որտեղ pixel-level metrics-ը բավարար չեն։
+
+\section{Hybrid approach}
+
+Հետագայում կարելի է համադրել action-based editing-ը diffusion-based image generation-ի հետ։ Action-based system-ը կարող է ապահովել rough spatial control, իսկ generative model-ը կարող է refine անել result-ը՝ դարձնելով այն ավելի natural։ Այս hybrid approach-ը կարող է միավորել controllability-ն և photorealism-ը։
+
+% ------------------------------------------------------------
+\chapter*{ԵԶՐԱԿԱՑՈՒԹՅՈՒՆՆԵՐ}
+\addcontentsline{toc}{chapter}{ԵԶՐԱԿԱՑՈՒԹՅՈՒՆՆԵՐ}
+
+Այս աշխատանքում ուսումնասիրվել և իրականացվել է \Eng{AI Image Manipulation} համակարգի research prototype, որի հիմնական գաղափարն է existing image-ի փոփոխությունը ներկայացնել որպես structured tool-based action generation problem։ Աշխատանքը չի փորձում 0-ից ստեղծել նոր general-purpose image generation model, քանի որ ժամանակակից image generation model-ները արդեն բավականին բարձր որակ ունեն։ Փոխարենը առաջարկվում է վերահսկելի editing workflow, որտեղ model-ի output-ը executable JSON action sequence է, որը կարող է validate, execute և analyze արվել։
+
+Աշխատանքի հիմնական եզրակացությունները հետևյալն են.
+\begin{enumerate}
+    \item Image manipulation task-ը կարելի է արդյունավետ ձևակերպել որպես \Eng{vision-language-action} mapping, որտեղ model-ը current canvas-ից և instruction-ից կանխատեսում է action chunk։
+    \item Annotation tool-ը թույլ է տալիս հավաքել ոչ միայն final edited images, այլ նաև editing process-ը՝ frames և operation logs տեսքով։ Սա կարևոր է supervised training targets ստեղծելու համար։
+    \item Data preparation pipeline-ը raw logs-ը վերածում է ավելի compact և trainable format-ի՝ օգտագործելով stroke grouping, RDP trajectory compression, sliding-window chunking և chat-format dataset construction։
+    \item Deterministic canvas executor-ը ապահովում է, որ generated actions-ը նույն input-ի դեպքում միշտ տան նույն output-ը, ինչը անհրաժեշտ է training-ի, inference-ի և reward calculation-ի համար։
+    \item QLoRA supervised fine-tuning-ը և reward-based GRPO training-ը տրամաբանական հաջորդականություն են այս խնդրի համար․ առաջինը սովորեցնում է action syntax և demonstrations, երկրորդը կարող է ուղղել visual outcome-ը։
+    \item Համակարգի գլխավոր ուժեղ կողմերն են interpretability, controllability և reproducibility։ Սահմանափակումներն են փոքր dataset-ը, action space-ի սահմանափակությունը և վերջնական quantitative evaluation-ի անհրաժեշտությունը։
+\end{enumerate}
+
+Ընդհանուր առմամբ, իրականացված աշխատանքը ցույց է տալիս, որ \Eng{AI}-ի միջոցով image manipulation-ը կարելի է կառուցել ոչ թե միայն որպես final image generation, այլ որպես designer-like editing actions-ի կանխատեսում։ Այս մոտեցումը հատկապես կարևոր է այն դեպքերում, երբ անհրաժեշտ է փոխել image-ի փոքր հատվածը և պահպանել մնացած մասերը։ Այն կարող է հիմք ծառայել ավելի բացատրելի, վերահսկելի և user-editable AI image editors-ի համար։
+
+% ------------------------------------------------------------
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{ՕԳՏԱԳՈՐԾՎԱԾ ԳՐԱԿԱՆՈՒԹՅԱՆ ՑԱՆԿ}
+
+\bibitem{GonzalezWoods2018}
+Gonzalez R. C., Woods R. E. \textit{Digital Image Processing}. 4th ed. New York: Pearson, 2018.
+
+\bibitem{Szeliski2022}
+Szeliski R. \textit{Computer Vision: Algorithms and Applications}. 2nd ed. Cham: Springer, 2022.
+
+\bibitem{Ramer1972}
+Ramer U. An iterative procedure for the polygonal approximation of plane curves. \textit{Computer Graphics and Image Processing}, 1972, Vol. 1, No. 3, pp. 244--256.
+
+\bibitem{DouglasPeucker1973}
+Douglas D. H., Peucker T. K. Algorithms for the reduction of the number of points required to represent a digitized line or its caricature. \textit{The Canadian Cartographer}, 1973, Vol. 10, No. 2, pp. 112--122.
+
+\bibitem{Hu2022}
+Hu E. J., Shen Y., Wallis P., Allen-Zhu Z., Li Y., Wang S., Wang L., Chen W. LoRA: Low-Rank Adaptation of Large Language Models. \textit{International Conference on Learning Representations}, 2022.
+
+\bibitem{Dettmers2023}
+Dettmers T., Pagnoni A., Holtzman A., Zettlemoyer L. QLoRA: Efficient Finetuning of Quantized LLMs. \textit{Advances in Neural Information Processing Systems}, 2023.
+
+\bibitem{Ouyang2022}
+Ouyang L., Wu J., Jiang X., Almeida D., Wainwright C., Mishkin P., Zhang C., et al. Training language models to follow instructions with human feedback. \textit{Advances in Neural Information Processing Systems}, 2022.
+
+\bibitem{Paszke2019}
+Paszke A., Gross S., Massa F., Lerer A., Bradbury J., Chanan G., et al. PyTorch: An Imperative Style, High-Performance Deep Learning Library. \textit{Advances in Neural Information Processing Systems}, 2019.
+
+\bibitem{Wolf2020}
+Wolf T., Debut L., Sanh V., Chaumond J., Delangue C., Moi A., et al. Transformers: State-of-the-Art Natural Language Processing. \textit{Proceedings of EMNLP: System Demonstrations}, 2020, pp. 38--45.
+
+\bibitem{OpenCV}
+Bradski G. The OpenCV Library. \textit{Dr. Dobb's Journal of Software Tools}, 2000.
+
+\bibitem{DeepSeekMath2024}
+Shao Z., Wang P., Zhu Q., Xu R., Song J., Bi X., et al. DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models. 2024.
+
+\bibitem{OpenPI}
+Physical Intelligence. \textit{openpi: open-source vision-language-action models and packages for robotics}. GitHub repository. URL: \url{https://github.com/Physical-Intelligence/openpi}, ծանոթանալու ամսաթիվը՝ 06.05.2026.
+
+\bibitem{ElysiumRepo}
+Aghababyan S. G. \textit{Elysium: AI-driven image manipulation project repository}. GitHub repository, training-upgrade branch. URL: \url{https://github.com/AghababyanSG/elysium/tree/training-upgrade}, ծանոթանալու ամսաթիվը՝ 06.05.2026.
+
+\end{thebibliography}
+
+% ------------------------------------------------------------
+\appendix
+\chapter*{ՀԱՎԵԼՎԱԾ Ա. CONFIGURATION-Ի ՕՐԻՆԱԿ}
+\addcontentsline{toc}{chapter}{ՀԱՎԵԼՎԱԾ Ա. CONFIGURATION-Ի ՕՐԻՆԱԿ}
+
+Ստորև ներկայացված է training configuration-ի կրճատ օրինակ, որը ցույց է տալիս model, LoRA, training և data parameters-ի պահման ձևը։
+
+\begin{lstlisting}[style=code]
+model:
+  name: "Qwen/Qwen3.5-4B"
+  load_in_4bit: true
+
+lora:
+  r: 16
+  alpha: 32
+  target_modules: "all-linear"
+  lora_dropout: 0.05
+
+training:
+  batch_size: 4
+  gradient_accumulation_steps: 16
+  learning_rate: 1.0e-4
+  epochs: 12
+  max_seq_length: 768
+
+data:
+  action_horizon: 2
+  rdp_epsilon: 2.0
+  train_split: 0.8
+  dataset_path: "data/processed"
+\end{lstlisting}
+
+\chapter*{ՀԱՎԵԼՎԱԾ Բ. ACTION JSON-Ի ՕՐԻՆԱԿ}
+\addcontentsline{toc}{chapter}{ՀԱՎԵԼՎԱԾ Բ. ACTION JSON-Ի ՕՐԻՆԱԿ}
+
+\begin{lstlisting}[style=code]
+{
+  "actions": [
+    {
+      "action_type": "brush",
+      "color_rgba": [0, 0, 0, 255],
+      "stroke_size": 8,
+      "start_point": [87, 118],
+      "end_point": [142, 125],
+      "hardness": 100
+    },
+    {
+      "action_type": "noop"
+    }
+  ]
+}
+\end{lstlisting}
+
+\chapter*{ՀԱՎԵԼՎԱԾ Գ. ԼՐԱՑՄԱՆ ԵՆԹԱԿԱ ՓՈՐՁԱՐԱՐԱԿԱՆ ԱՂՅՈՒՍԱԿ}
+\addcontentsline{toc}{chapter}{ՀԱՎԵԼՎԱԾ Գ. ԼՐԱՑՄԱՆ ԵՆԹԱԿԱ ՓՈՐՁԱՐԱՐԱԿԱՆ ԱՂՅՈՒՍԱԿ}
+
+Այս աղյուսակը նախատեսված է իրական training run-ից հետո լրացնելու համար։ Թվերը պետք է ստացվեն TensorBoard logs-ից կամ evaluation script-ից։
+
+\begin{table}[H]
+\caption{Training/evaluation արդյունքների լրացման ձևաչափ}
+\centering
+\begin{tabularx}{\textwidth}{p{4cm}p{4cm}X}
+\toprule
+\textbf{Metric} & \textbf{Արժեք} & \textbf{Մեկնաբանություն} \\
+\midrule
+\Eng{Final train loss} & \TODO{արժեք} & Վերջին կամ best checkpoint-ի training loss։ \\
+\Eng{Validation loss} & \TODO{արժեք} & Validation split-ի loss։ \\
+\Eng{JSON validity rate} & \TODO{արժեք} & Generated outputs-ից valid JSON-ների տոկոսը։ \\
+\Eng{Mean visual reward} & \TODO{արժեք} & Visual reward-ի միջին արժեքը test/eval samples-ի վրա։ \\
+\Eng{Human score} & \TODO{արժեք} & Manual evaluation-ի միջին գնահատականը։ \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\end{document}

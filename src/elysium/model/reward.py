@@ -1,86 +1,80 @@
 """Visual reward for GRPO training.
 
-Computes a masked region accuracy between the canvas produced by executing
-generated actions and the ground-truth next canvas from the recording.
+Coverage-weighted reward that pushes the policy away from noop predictions.
 
-Rather than global SSIM (blind to small strokes that cover <1% of pixels),
-the reward focuses on the pixels that actually changed in the ground truth:
+For a non-terminal training row (the only kind RL training sees — the dataset
+is filtered upstream in `rl_train._build_grpo_dataset`):
 
-- Non-terminal chunks: MAE inside the GT-changed region, with a small penalty
-  for unexpected changes outside that region. Reward in [-1, 1].
-- Terminal chunks (no gt_next) or near-end chunks with <50 changed pixels:
-  penalise any change to the canvas — a correct noop scores ~1.0.
+    coverage  = |pred_changed_mask ∩ gt_mask| / |gt_mask|     in [0, 1]
+    accuracy  = 1 - mean|pred - gt_next| inside gt_mask        in [-∞, 1]
+    spurious  = mean|pred - current| outside gt_mask           in [0, 1]
+    reward    = coverage * accuracy - 0.1 * spurious           clipped to [-1, 1]
+
+A noop prediction has `coverage = 0` ⇒ reward ≤ 0, so the policy can never
+beat real strokes by doing nothing. A pixel-perfect prediction has
+coverage = 1 and accuracy = 1 ⇒ reward = 1 (minus any spurious-change
+penalty). The reward is monotone in "actually painted near where GT painted",
+which gives GRPO a usable advantage signal.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from elysium.schemas.actions import CANVAS_SIZE
-
 __all__ = ["visual_reward"]
 
 _CHANGE_THRESHOLD = 0.01   # per-channel delta considered "changed"
-_MIN_CHANGED_PX = 50       # below this, treat the chunk as terminal
-_TERMINAL_SCALE = 20.0     # multiplier that maps mean canvas change → penalty
-
-
-def _region_reward(
-    predicted: np.ndarray,
-    gt_next: np.ndarray,
-    current: np.ndarray,
-) -> float:
-    """MAE-based reward focused on the GT-changed region."""
-    diff_gt = np.abs(gt_next - current)                   # (H, W, 3)
-    mask = diff_gt.max(axis=2) > _CHANGE_THRESHOLD        # (H, W) bool
-
-    n_changed = int(mask.sum())
-    if n_changed < _MIN_CHANGED_PX:
-        return _terminal_reward(predicted, current)
-
-    region_mae = float(np.abs(predicted[mask] - gt_next[mask]).mean())
-    region_acc = 1.0 - region_mae                          # in [-∞, 1]
-
-    outside = ~mask
-    if outside.any():
-        unexpected = float(np.abs(predicted[outside] - current[outside]).mean())
-        region_acc -= 0.1 * unexpected
-
-    return float(np.clip(region_acc, -1.0, 1.0))
-
-
-def _terminal_reward(predicted: np.ndarray, current: np.ndarray) -> float:
-    """Reward for chunks where no change is expected (noop territory)."""
-    pred_change = float(np.abs(predicted - current).mean())
-    return float(max(-1.0, 1.0 - pred_change * _TERMINAL_SCALE))
+_MIN_GT_PIXELS = 50        # below this the row should not be in the RL dataset
 
 
 def visual_reward(
     predicted_canvas: np.ndarray,
-    gt_next_canvas: np.ndarray | None,
+    gt_next_canvas: np.ndarray,
     current_canvas: np.ndarray,
 ) -> float:
-    """Masked-region visual reward in [-1, 1].
+    """Coverage-weighted visual reward in [-1, 1].
 
     Args:
-        predicted_canvas: float32 RGB [0, 1] canvas after executing generated
-            actions. Shape: (H, W, 3).
-        gt_next_canvas: float32 RGB [0, 1] ground-truth next-state canvas, or
-            None for terminal chunks (model should predict noop).
+        predicted_canvas: float32 RGB [0, 1] canvas after executing the
+            generated actions. Shape: (H, W, 3).
+        gt_next_canvas: float32 RGB [0, 1] ground-truth next-state canvas.
+            Must not be None — terminal rows are filtered out of the RL
+            dataset upstream.
         current_canvas: float32 RGB [0, 1] canvas before any actions were
             applied (the observation the model received).
 
     Returns:
         Scalar reward in [-1, 1].
     """
-    assert predicted_canvas.shape == current_canvas.shape, (
-        f"Shape mismatch: {predicted_canvas.shape} vs {current_canvas.shape}"
+    assert gt_next_canvas is not None, (
+        "visual_reward called with gt_next_canvas=None; terminal rows must be "
+        "filtered from the RL dataset before training (see rl_train._build_grpo_dataset)."
+    )
+    assert predicted_canvas.shape == current_canvas.shape == gt_next_canvas.shape, (
+        f"Shape mismatch: pred={predicted_canvas.shape} "
+        f"current={current_canvas.shape} gt={gt_next_canvas.shape}"
     )
 
-    if gt_next_canvas is None:
-        return _terminal_reward(predicted_canvas, current_canvas)
-
-    assert predicted_canvas.shape == gt_next_canvas.shape, (
-        f"Shape mismatch: {predicted_canvas.shape} vs {gt_next_canvas.shape}"
+    gt_diff = np.abs(gt_next_canvas - current_canvas).max(axis=2)   # (H, W)
+    gt_mask = gt_diff > _CHANGE_THRESHOLD                            # (H, W) bool
+    n_gt = int(gt_mask.sum())
+    assert n_gt >= _MIN_GT_PIXELS, (
+        f"Row has only {n_gt} GT-changed pixels; should have been filtered out."
     )
-    return _region_reward(predicted_canvas, gt_next_canvas, current_canvas)
+
+    pred_diff = np.abs(predicted_canvas - current_canvas).max(axis=2)
+    pred_changed = pred_diff > _CHANGE_THRESHOLD
+
+    coverage = float((pred_changed & gt_mask).sum()) / float(n_gt)
+
+    region_mae = float(np.abs(predicted_canvas[gt_mask] - gt_next_canvas[gt_mask]).mean())
+    accuracy = 1.0 - region_mae
+
+    outside = ~gt_mask
+    if outside.any():
+        spurious = float(np.abs(predicted_canvas[outside] - current_canvas[outside]).mean())
+    else:
+        spurious = 0.0
+
+    reward = coverage * accuracy - 0.1 * spurious
+    return float(np.clip(reward, -1.0, 1.0))

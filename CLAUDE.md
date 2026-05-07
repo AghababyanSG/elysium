@@ -22,13 +22,17 @@ python -m pytest tests/test_action_io.py
 python tools/annotate.py data/raw/images/<image>.jpg
 
 # Build training dataset
-python scripts/prepare_data.py [--config configs/train.yaml] [--epsilon 2.0]
+python scripts/prepare_data.py [--config configs/train.yaml] [--epsilon 2.0] [--instructions configs/instructions.yaml]
 
-# Train (SFT by default; add --rl for GRPO after SFT checkpoint exists)
-python scripts/train.py [--sft] [--rl] [--epochs N] [--batch-size N]
+# Train. Defaults to SFT only. The data pipeline (prepare_data) is auto-run
+# every launch unless --skip-prepare is passed.
+python scripts/train.py                      # SFT only
+python scripts/train.py --rl                 # RL only (requires existing SFT checkpoint)
+python scripts/train.py --sft --rl           # SFT warmup then RL
+python scripts/train.py --epochs N --batch-size N --skip-prepare
 
 # Inference
-python scripts/infer.py <image_path> "<instruction>" [--checkpoint models/checkpoints/final] [--preview]
+python scripts/infer.py <image_path> "<instruction>" [--checkpoint models/checkpoints/final] [--output path.jpg] [--preview]
 ```
 
 Ruff is configured in `pyproject.toml`: line length 100, rules E/F/I. Commit message format: `type(scope): description` (e.g. `feat(model): add RL checkpoint save`).

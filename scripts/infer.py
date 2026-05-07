@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show a live preview window; close it to stop inference early",
     )
+    parser.add_argument(
+        "--frames-dir",
+        type=Path,
+        default=None,
+        help="Directory to save canvas frames after each chunk (frame_0000.png = input, frame_0001.png = after chunk 0, …)",
+    )
     return parser.parse_args()
 
 
@@ -71,6 +77,7 @@ def main() -> None:
         output_path=output_path,
         config_path=args.config,
         show_preview=args.preview,
+        frames_dir=args.frames_dir,
     )
 
 
