@@ -1,6 +1,6 @@
 model:
   name: "Qwen/Qwen3.5-4B"
-  load_in_4bit: true
+  load_in_4bit: false
 
 lora:
   r: 16
@@ -14,13 +14,13 @@ lora:
   bias: "none"
 
 training:
-  batch_size: 16
+  batch_size: 32
   eval_batch_size: 16
-  gradient_accumulation_steps: 16
+  gradient_accumulation_steps: 8
   learning_rate: 1.0e-4
   epochs: 12
   optimizer: "adamw_8bit"
-  gradient_checkpointing: "unsloth"
+  gradient_checkpointing: false #"unsloth"
   max_seq_length: 768
   warmup_steps: 50
   logging_steps: 10
@@ -50,17 +50,32 @@ inference:
   max_chunks: 200
   ensemble_execute_k: 2
   max_new_tokens: 256
+  # Match the RL training generation distribution so the inference policy
+  # actually behaves like the rewarded policy. Greedy decoding on this small
+  # SFT dataset collapses to noop on step 0 → blank canvas.
+  do_sample: true
+  temperature: 1.0
+  top_p: 1.0
+  repetition_penalty: 1.0
 
 rl:
   enabled: true
   epochs: 3
-  learning_rate: 2.0e-6
-  per_device_batch_size: 2
-  gradient_accumulation_steps: 2
+  # Bumped from 2e-6: previous run sat at the GT-mimicry ceiling, so the rare
+  # informative gradient steps (hard-tail prompts) need a stronger update to
+  # actually move the policy.
+  learning_rate: 5.0e-6
+  per_device_batch_size: 4
+  gradient_accumulation_steps: 1
   num_generations: 8
-  temperature: 1.0
+  # Slightly above 1.0 to widen within-group reward variance: at temp=1.0 the
+  # post-SFT policy collapsed many groups to identical 29-token GT mimics
+  # (reward_std=0, frac_reward_zero_std=1, no gradient).
+  temperature: 1.1
   top_p: 1.0
-  beta: 0.1
+  # Lowered from 0.1 (TRL's GRPO default is 0.04). High beta + saturating
+  # reward = loss dominated by KL with no policy movement.
+  beta: 0.04
   repetition_penalty: 1.0
   max_prompt_length: 768
   max_completion_length: 384
@@ -68,6 +83,13 @@ rl:
   save_steps: 100
   save_total_limit: 3
   warmup_sft_first: true
-  max_grad_norm: 0.1
+  # Bumped from 0.1: at 0.1 a single bad batch (kl spike) gets clipped so hard
+  # the policy barely moves; 0.5 is gentler without letting spikes through.
+  max_grad_norm: 0.5
   warmup_ratio: 0.1
   lr_scheduler_type: cosine
+  # Drop "trivially easy" GRPO rows where the GT chunk barely changes the
+  # canvas. SFT already nails these, so all `num_generations` generations land
+  # on the same answer (reward_std=0, no gradient). Bumped from 50 to push the
+  # training distribution onto the hard tail where RL can still extract signal.
+  min_gt_pixels: 200

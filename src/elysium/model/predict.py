@@ -145,6 +145,10 @@ class Predictor:
         max_chunks: int = 20,
         ensemble_k: int = 5,
         max_new_tokens: int = 4096,
+        do_sample: bool = True,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        repetition_penalty: float = 1.0,
     ) -> None:
         self.model = model
         self.processor = processor
@@ -152,22 +156,20 @@ class Predictor:
         self.max_chunks = max_chunks
         self.ensemble_k = min(ensemble_k, horizon)
         self.max_new_tokens = max_new_tokens
+        self.do_sample = do_sample
+        self.temperature = temperature
+        self.top_p = top_p
+        self.repetition_penalty = repetition_penalty
 
     @torch.inference_mode()  # type: ignore[misc]
-    def _predict_chunk(
-        self, canvas_pil: Image.Image, instruction: str, do_sample: bool = True
-    ) -> ActionChunk:
+    def _predict_chunk(self, canvas_pil: Image.Image, instruction: str) -> ActionChunk:
         """Run one model forward pass and parse the output into an ActionChunk.
 
-        Args:
-            canvas_pil: Current canvas as a PIL image.
-            instruction: Natural language editing instruction.
-            do_sample: If True, use temperature sampling. Default True — greedy
-                decoding is prone to falling into degenerate trajectory loops on
-                a small SFT dataset.
-
-        Returns:
-            Parsed ActionChunk.
+        Generation params mirror the RL training distribution (sample at
+        temperature 1.0, no repetition penalty) so the inference-time policy
+        matches the policy that was actually rewarded. Greedy decoding is
+        catastrophic on this small SFT dataset — the argmax path collapses to
+        the noop chunk on step 0 and produces a blank canvas.
         """
         inputs = build_generation_processor_inputs(
             self.processor, canvas_pil, instruction, self.horizon
@@ -182,25 +184,29 @@ class Predictor:
         tok = self.processor.tokenizer
         prompt_len = inputs["input_ids"].shape[1]
         stop_crit = JsonBalanceStoppingCriteria(tokenizer=tok, prompt_len=prompt_len)
-        output_ids = self.model.generate(
-            **inputs,
+        gen_kwargs: dict[str, Any] = dict(
             max_new_tokens=self.max_new_tokens,
-            do_sample=do_sample,
-            temperature=0.3 if do_sample else None,
-            top_p=0.9 if do_sample else None,
-            repetition_penalty=1.15,
+            do_sample=self.do_sample,
+            repetition_penalty=self.repetition_penalty,
             eos_token_id=tok.eos_token_id,
             pad_token_id=tok.pad_token_id,
             stopping_criteria=StoppingCriteriaList([stop_crit]),
         )
+        if self.do_sample:
+            gen_kwargs["temperature"] = self.temperature
+            gen_kwargs["top_p"] = self.top_p
+        output_ids = self.model.generate(**inputs, **gen_kwargs)
         generated = output_ids[0][inputs["input_ids"].shape[1]:]
         raw_output = self.processor.decode(generated, skip_special_tokens=True)
 
-        logger.debug("Raw model output: {}", raw_output[:500])
+        logger.info("Raw model output: {}", raw_output[:500])
         try:
             return parse_action_chunk(raw_output, self.horizon)
         except Exception as exc:
-            logger.warning("Failed to parse model output ({}): {} — using noop chunk", type(exc).__name__, exc)
+            logger.warning(
+                "Failed to parse model output ({}): {} — using noop chunk",
+                type(exc).__name__, exc,
+            )
             return ActionChunk.noop_chunk(self.horizon)
 
     def run(
@@ -253,7 +259,7 @@ class Predictor:
                 break
 
             canvas_pil = _float32_to_pil(canvas)
-            chunk = self._predict_chunk(canvas_pil, instruction, do_sample=False)
+            chunk = self._predict_chunk(canvas_pil, instruction)
 
             if chunk.is_terminal:
                 logger.info("Step {}: model signalled completion (all-noop chunk)", step)
@@ -312,6 +318,10 @@ def run_inference(
     max_chunks = infer_cfg.get("max_chunks", 20)
     ensemble_k = infer_cfg.get("ensemble_execute_k", horizon)
     max_new_tokens = int(infer_cfg.get("max_new_tokens", 4096))
+    do_sample = bool(infer_cfg.get("do_sample", True))
+    temperature = float(infer_cfg.get("temperature", 1.0))
+    top_p = float(infer_cfg.get("top_p", 1.0))
+    repetition_penalty = float(infer_cfg.get("repetition_penalty", 1.0))
 
     base_model = cfg["model"]["name"]
     local_only = base_model in cached_repo_ids()
@@ -331,6 +341,10 @@ def run_inference(
         max_chunks=max_chunks,
         ensemble_k=ensemble_k,
         max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
     )
 
     image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))

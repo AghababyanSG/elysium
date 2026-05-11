@@ -119,10 +119,15 @@ def _extract_instruction(row: dict[str, Any]) -> str:
     raise AssertionError("Dataset sample is missing user instruction text")
 
 
-_MIN_GT_PIXELS_FOR_RL = 50  # mirrors reward._MIN_GT_PIXELS — keep in sync
+_MIN_GT_PIXELS_FOR_RL_DEFAULT = 50  # mirrors reward._MIN_GT_PIXELS lower bound
 
 
-def _build_grpo_dataset(train_data: Any, processor: Any, horizon: int) -> Dataset:
+def _build_grpo_dataset(
+    train_data: Any,
+    processor: Any,
+    horizon: int,
+    min_gt_pixels: int = _MIN_GT_PIXELS_FOR_RL_DEFAULT,
+) -> Dataset:
     """Build the GRPO dataset, dropping terminal and near-terminal rows.
 
     RL must not see rows where the optimal answer is "do nothing" — those create
@@ -130,9 +135,15 @@ def _build_grpo_dataset(train_data: Any, processor: Any, horizon: int) -> Datase
     three signals:
       1. `next_image == ""` — structural marker for the last chunk in a session
       2. `ActionChunk.is_terminal` — all-noop GT chunk
-      3. executing GT changes < 50 pixels — matches the reward function's
-         minimum-coverage assertion
+      3. executing GT changes < `min_gt_pixels` pixels — must be at least
+         reward._MIN_GT_PIXELS (=50) so the reward assertion holds; setting it
+         higher trims the saturated tail where SFT already nails the GT and the
+         GRPO group collapses to zero reward variance.
     """
+    assert min_gt_pixels >= _MIN_GT_PIXELS_FOR_RL_DEFAULT, (
+        f"min_gt_pixels={min_gt_pixels} is below reward._MIN_GT_PIXELS={_MIN_GT_PIXELS_FOR_RL_DEFAULT}; "
+        "the reward function will assert."
+    )
     prompts: list[str] = []
     images: list[Any] = []
     gt_actions: list[str] = []
@@ -155,7 +166,7 @@ def _build_grpo_dataset(train_data: Any, processor: Any, horizon: int) -> Datase
         canvas_np = _image_to_float32(ensure_rgb_canvas_size(pil))
         gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
         diff = np.abs(gt_target - canvas_np).max(axis=2)
-        if int((diff > 0.01).sum()) < _MIN_GT_PIXELS_FOR_RL:
+        if int((diff > 0.01).sum()) < min_gt_pixels:
             dropped_near_terminal += 1
             continue
 
@@ -270,8 +281,14 @@ def run_rl_training(
     raw_dataset = load_from_disk(str(dataset_path))
     train_data = raw_dataset["train"]
 
-    logger.info("Building GRPO dataset ({} samples)", len(train_data))
-    grpo_dataset = _build_grpo_dataset(train_data, processor, horizon)
+    min_gt_pixels = int(rl_cfg.get("min_gt_pixels", _MIN_GT_PIXELS_FOR_RL_DEFAULT))
+    logger.info(
+        "Building GRPO dataset ({} samples, min_gt_pixels={})",
+        len(train_data), min_gt_pixels,
+    )
+    grpo_dataset = _build_grpo_dataset(
+        train_data, processor, horizon, min_gt_pixels=min_gt_pixels
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
