@@ -32,7 +32,6 @@ from PIL import Image
 from pydantic import ValidationError
 from transformers import TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
-from unsloth import FastVisionModel
 
 from elysium.engine.canvas import execute_chunk
 from elysium.log import logger
@@ -41,6 +40,7 @@ from elysium.model.action_io import (
     apply_action_chat_template,
     parse_action_chunk,
 )
+from elysium.model.coord_tokens import add_coord_tokens, init_coord_token_embeddings
 from elysium.model.predict import apply_image_pixel_budget, cached_repo_ids, ensure_rgb_canvas_size
 from elysium.model.reward import visual_reward
 from elysium.schemas.actions import ActionChunk
@@ -266,15 +266,48 @@ def run_rl_training(
 
     base_model = model_cfg["name"]
     local_only = base_model in cached_repo_ids()
+    use_unsloth = bool(model_cfg.get("use_unsloth", False))
 
-    logger.info("Loading model from {} (local_files_only={})", sft_checkpoint, local_only)
-    model, processor = FastVisionModel.from_pretrained(
-        model_name=str(sft_checkpoint),
-        load_in_4bit=model_cfg.get("load_in_4bit", True),
-        local_files_only=local_only,
+    logger.info(
+        "Loading model from {} (local_files_only={}, use_unsloth={})",
+        sft_checkpoint, local_only, use_unsloth,
     )
+
+    if use_unsloth:
+        import os as _os
+        _os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")
+        from unsloth import FastVisionModel  # type: ignore
+
+        model, processor = FastVisionModel.from_pretrained(
+            model_name=str(sft_checkpoint),
+            load_in_4bit=model_cfg.get("load_in_4bit", True),
+            local_files_only=local_only,
+        )
+        # Idempotent: SFT checkpoint should already contain coord tokens.
+        base_tokenizer = getattr(processor, "tokenizer", processor)
+        added = add_coord_tokens(base_tokenizer)
+        if added:
+            try:
+                model.resize_token_embeddings(len(base_tokenizer), mean_resizing=False)
+            except TypeError:
+                model.resize_token_embeddings(len(base_tokenizer))
+            init_coord_token_embeddings(model, base_tokenizer)
+            logger.warning(
+                "RL added {} coord tokens at load time -- the SFT checkpoint did "
+                "not contain them. Did you forget to run SFT after Phase 1?", added,
+            )
+        FastVisionModel.for_training(model)
+    else:
+        from elysium.model.loading import load_adapter_for_training
+
+        model, processor = load_adapter_for_training(
+            checkpoint_dir=sft_checkpoint,
+            base_model_name=base_model,
+            load_in_4bit=bool(model_cfg.get("load_in_4bit", False)),
+            local_only=local_only,
+        )
+
     apply_image_pixel_budget(processor, model_cfg)
-    FastVisionModel.for_training(model)
 
     dataset_path = Path(data_cfg["dataset_path"])
     logger.info("Loading dataset from {}", dataset_path)

@@ -5,6 +5,7 @@ from itertools import takewhile
 from typing import Any
 
 from elysium.log import logger
+from elysium.model.coord_tokens import resolve_tokens
 from elysium.schemas.actions import ActionChunk, NoopAction, build_system_prompt, parse_action
 
 __all__ = [
@@ -162,10 +163,16 @@ def _first_balanced_json_object(s: str) -> str | None:
 
 
 def extract_action_json(raw: str) -> str:
+    """Return the first balanced ``{...}`` object as strict JSON text.
+
+    Coord/color sentinels (``<xN>``/``<yN>``/``<cN>``) are resolved to their
+    integer values here so downstream callers can use ``json.loads`` directly.
+    """
     t = strip_redacted_thinking_lead(raw)
     blob = _first_balanced_json_object(t)
     if blob is None:
         raise ValueError(f"No JSON object found in model output: {raw!r}")
+    blob = resolve_tokens(blob)
     data = json.loads(blob)
     if not isinstance(data, dict) or "actions" not in data:
         raise ValueError(f"JSON must be an object with 'actions': {blob!r}")

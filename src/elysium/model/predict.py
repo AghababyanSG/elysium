@@ -1,15 +1,15 @@
 """Inference pipeline: chunk-execute-reobserve loop.
 
-Loads the fine-tuned Qwen3.5 model (merged LoRA adapter), then runs the
-following loop until completion or max_chunks is reached:
+Loads the fine-tuned Qwen3.5-VL model (LoRA adapter, via HuggingFace + PEFT),
+then runs the following loop until completion or max_chunks is reached:
 
   1. Observe  -- convert current canvas ndarray to PIL image
-  2. Predict  -- model generates a JSON 5-action chunk
-  3. Execute  -- canvas executor applies all 5 actions sequentially
+  2. Predict  -- model generates a JSON action chunk
+  3. Execute  -- canvas executor applies the actions sequentially
   4. Repeat   -- until all-noop chunk or max_chunks exceeded
 
 Optionally uses temporal ensembling: execute only k < horizon actions before
-re-observing, averaging overlapping predictions for smoother transitions.
+re-observing.
 """
 
 from __future__ import annotations
@@ -17,18 +17,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import os
-
-os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")
-
 import numpy as np
 import torch
 import yaml
 from huggingface_hub import scan_cache_dir
 from huggingface_hub.constants import HF_HUB_CACHE
 from PIL import Image
-from unsloth import FastVisionModel
-
 from transformers import StoppingCriteriaList
 
 from elysium.engine.canvas import execute_chunk
@@ -325,14 +319,52 @@ def run_inference(
 
     base_model = cfg["model"]["name"]
     local_only = base_model in cached_repo_ids()
-    logger.info("Loading model from {} (local_files_only={})", checkpoint_dir, local_only)
-    model, processor = FastVisionModel.from_pretrained(
-        model_name=str(checkpoint_dir),
-        load_in_4bit=cfg["model"].get("load_in_4bit", True),
-        local_files_only=local_only,
+    use_unsloth = bool(cfg["model"].get("use_unsloth", False))
+    logger.info(
+        "Loading model from {} (local_files_only={}, use_unsloth={})",
+        checkpoint_dir, local_only, use_unsloth,
     )
+
+    if use_unsloth:
+        import os as _os
+        _os.environ.setdefault("UNSLOTH_COMPILE_DISABLE", "1")
+        from unsloth import FastVisionModel  # type: ignore
+
+        model, processor = FastVisionModel.from_pretrained(
+            model_name=str(checkpoint_dir),
+            load_in_4bit=cfg["model"].get("load_in_4bit", True),
+            local_files_only=local_only,
+        )
+        # Idempotent: SFT/RL checkpoint should already contain coord tokens.
+        from elysium.model.coord_tokens import (
+            add_coord_tokens as _add_coord,
+            init_coord_token_embeddings as _init_coord,
+        )
+        base_tokenizer = getattr(processor, "tokenizer", processor)
+        added = _add_coord(base_tokenizer)
+        if added:
+            try:
+                model.resize_token_embeddings(len(base_tokenizer), mean_resizing=False)
+            except TypeError:
+                model.resize_token_embeddings(len(base_tokenizer))
+            _init_coord(model, base_tokenizer)
+            logger.warning(
+                "Inference added {} coord tokens at load time -- checkpoint did "
+                "not contain them.", added,
+            )
+        FastVisionModel.for_inference(model)
+    else:
+        # Local import to avoid circular import (loading imports predict for helpers).
+        from elysium.model.loading import load_adapter_for_inference
+
+        model, processor = load_adapter_for_inference(
+            checkpoint_dir=checkpoint_dir,
+            base_model_name=base_model,
+            load_in_4bit=bool(cfg["model"].get("load_in_4bit", False)),
+            local_only=local_only,
+        )
+
     apply_image_pixel_budget(processor, cfg["model"])
-    FastVisionModel.for_inference(model)
 
     predictor = Predictor(
         model=model,

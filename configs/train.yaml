@@ -1,6 +1,11 @@
 model:
   name: "Qwen/Qwen3.5-4B"
   load_in_4bit: false
+  # use_unsloth=true selects Unsloth's FastVisionModel path (best for the 8GB
+  # laptop, supports QLoRA + 8-bit optim). use_unsloth=false uses plain HF +
+  # PEFT -- use this on bigger GPUs to bypass Unsloth's vision-tower quirks
+  # (forced 512x512 patch embed, vision tower require_grad).
+  use_unsloth: false
 
 lora:
   r: 16
@@ -14,13 +19,13 @@ lora:
   bias: "none"
 
 training:
-  batch_size: 32
-  eval_batch_size: 16
-  gradient_accumulation_steps: 8
+  batch_size: 4
+  eval_batch_size: 4
+  gradient_accumulation_steps: 4
   learning_rate: 1.0e-4
   epochs: 12
-  optimizer: "adamw_8bit"
-  gradient_checkpointing: false #"unsloth"
+  optimizer: "adamw_torch"
+  gradient_checkpointing: true
   max_seq_length: 768
   warmup_steps: 50
   logging_steps: 10

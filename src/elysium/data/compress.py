@@ -134,29 +134,6 @@ def _operations_to_strokes(operations: list[dict[str, Any]]) -> list[dict[str, A
     return strokes
 
 
-def _rescale_operation(op: dict[str, Any], scale: float) -> dict[str, Any]:
-    """Return a copy of op with spatial fields scaled by `scale`.
-
-    Touches start_pos / end_pos / size / trajectory — these are pixel-unit
-    fields that come from the raw annotator log. Other fields (timestamp,
-    color, percent-valued knobs) are left alone.
-    """
-    out = dict(op)
-    for key in ("start_pos", "end_pos"):
-        v = out.get(key)
-        if isinstance(v, (list, tuple)) and len(v) == 2:
-            out[key] = [int(round(v[0] * scale)), int(round(v[1] * scale))]
-    sz = out.get("size")
-    if isinstance(sz, (int, float)):
-        out["size"] = max(1, int(round(sz * scale)))
-    traj = out.get("trajectory")
-    if isinstance(traj, list):
-        out["trajectory"] = [
-            [int(round(p[0] * scale)), int(round(p[1] * scale))] for p in traj
-        ]
-    return out
-
-
 def _to_rgba(color: Sequence[int]) -> list[int]:
     if len(color) == 3:
         return [int(color[0]), int(color[1]), int(color[2]), 255]
@@ -233,20 +210,10 @@ def compress_session(session_path: Path, output_path: Path, epsilon: float = 2.0
 
     operations: list[dict[str, Any]] = session.get("operations", [])
     image_name: str = session.get("image_name", session_path.stem)
-    canvas_size: int = session.get("canvas_size", 512)
-
-    scale = CANVAS_SIZE / canvas_size
-    if scale != 1.0:
-        operations = [_rescale_operation(op, scale) for op in operations]
-        epsilon = epsilon * scale
-        logger.info(
-            "Rescaling %s: canvas_size %d -> %d (scale=%.3f, epsilon=%.3f)",
-            session_path.stem,
-            canvas_size,
-            CANVAS_SIZE,
-            scale,
-            epsilon,
-        )
+    canvas_size: int = session["canvas_size"]
+    assert canvas_size == CANVAS_SIZE, (
+        f"{session_path.stem}: canvas_size={canvas_size}, expected {CANVAS_SIZE}"
+    )
 
     strokes = _operations_to_strokes(operations)
 
@@ -440,9 +407,21 @@ def compress_all(
         return {}
 
     results: dict[str, list[dict[str, Any]]] = {}
+    skipped = 0
     for session_path in session_files:
+        with session_path.open() as f:
+            meta_canvas_size = json.load(f).get("canvas_size")
+        if meta_canvas_size != CANVAS_SIZE:
+            logger.warning(
+                "Skipping %s: canvas_size=%s, expected %d",
+                session_path.stem,
+                meta_canvas_size,
+                CANVAS_SIZE,
+            )
+            skipped += 1
+            continue
         out_path = output_dir / session_path.name
         results[session_path.stem] = compress_session(session_path, out_path, epsilon)
 
-    logger.info("Compressed %d sessions", len(results))
+    logger.info("Compressed %d sessions (skipped %d)", len(results), skipped)
     return results

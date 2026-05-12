@@ -1,89 +1,65 @@
 tasks:
-  #  bmw_car:
-  #    instruction: "Remove the car logo"
-  #    sessions:
-  #      - bmw_car_20260413_051446
-  boat:
-    instruction: "turn the image to black and white, so the shadows of the waves will be dark"
+  doggy:
+    instruction: "remove the dog from the image"
     sessions:
-      - boat_20260413_052110
-  cannavaro:
-    instruction: "Draw strong and thick mustache on man's face"
-    sessions:
-      - cannavaro_20260413_052924
-  fishing:
-    instruction: "Rearrange the colors to look like it is photographed right before the dusk"
-    sessions:
-      - fishing_20260413_053723
-  honda_nsx_type_r:
-    instruction: "blur the car logo"
-    sessions:
-      - honda-nsx-type-r_20260413_054112
-  jaap_stam:
-    instruction: "draw funny mustache, from each side 3 brush lines"
-    sessions:
-      - jaap_stam_20260413_054526
-        #mercedes:
-        #  instruction: "blur the logo and the number plate, make the image less shiny and bright"
-        #  sessions:
-      - mecedes_20260413_055029
-  moto:
-    instruction: 'make watermarks all over the image. the watermark text is "BMW"'
-    sessions:
-      - moto_20260413_055504
-  sun:
+      - doggy_20260512_212127
+  sun_top_left:
     instruction: "draw a sun in top left corner"
     sessions:
-      - white_512_20260422_000418
-  sun_smiley:
-    instruction: "draw a sun with smiley face in top left corner"
+      - white_512_20260512_212320
+  sun_top_right:
+    instruction: "draw a sun in top right corner"
     sessions:
-      - white_512_20260422_000922
-  house:
-    instruction: "draw a house with red roof, window and yellow door"
+      - white_512_20260512_212424
+  girl_with_mole:
+    instruction: "remove the mole"
     sessions:
-      - white_512_20260422_001353
-  sky_ground:
-    instruction: "draw green ground, sky and 2 clouds"
+      - girl_with_mole_20260512_212952
+  mecedes:
+    instruction: "blur the car logo and plate"
     sessions:
-      - white_512_20260422_001925
-  grass_realistic:
-    instruction: "more realistic grass"
-    sessions:
-      - ground_sky_clouds_20260422_002630
-  lightning_clouds:
-    instruction: "draw 3 lightnings under the right cloud, the middle one big, two others smaller"
-    sessions:
-      - ground_sky_clouds_20260422_002920
-  strawberry_heart:
-    instruction: "deform the strawberry to look like a heart"
-    sessions:
-      - strawberry_20260422_005104
-  double_chin:
-    instruction: "deform to get rid of the double chin"
-    sessions:
-      - double_chin_20260422_005913
-  zlatan:
-    instruction: "draw 'baller' style beard"
-    sessions:
-      - zlatan_20260426_204620
-  sunset_man_silhouette:
-    instruction: "draw a small bush on right side of the horizon"
-    sessions:
-      - sunset_man_silhouette_20260426_204915
-  soldiers:
-    instruction: "blur the faces of the soldiers"
-    sessions:
-      - soldiers_20260426_210043
+      - mecedes_20260512_213256
   jolie:
-    instruction: "make the woman's face smile"
+    instruction: "make the woman smile"
     sessions:
-      - jolie_20260426_210322
-  jolie_sad:
-    instruction: "make the woman's face sad"
+      - jolie_20260512_213417
+  brad_pitt:
+    instruction: "make the man sad"
     sessions:
-      - jolie_20260426_210443
-  cartoon_car:
-    instruction: "draw eyes on the car's windshield"
+      - brad_pitt_20260512_213540
+  moto:
+    instruction: 'write text "BMW" as watermark all over the image'
     sessions:
-      - cartoon_car_20260426_210836
+      - moto_20260512_213749
+  soldiers:
+    instruction: "blur the faces of soldiers"
+    sessions:
+      - soldiers_20260512_222911
+  double_chin:
+    instruction: "get rid of double chin using warp tool"
+    sessions:
+      - double_chin_20260512_223043
+  sunset:
+    instruction: "adjust the colors to be less bright and lower temperature"
+    sessions:
+      - sunset_20260512_223620
+  fishing:
+    instruction: "make the image black and white, add black shadows and increase saturation"
+    sessions:
+      - fishing_20260512_223738
+  pirlo:
+    instruction: "draw mustache on man"
+    sessions:
+      - pirlo_20260512_224724
+  zlatan:
+    instruction: "draw mustache on face"
+    sessions:
+      - zlatan_20260512_225014
+  stickman:
+    instruction: "draw a stickman"
+    sessions:
+      - white_512_20260512_225206
+  smiley_face:
+    instruction: "draw a smiley face"
+    sessions:
+      - white_512_20260512_225307

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -38,9 +39,10 @@ def build_system_prompt(horizon: int) -> str:
         '{"actions":[{"action_type":"...",...},...]}\n'
         "Available action_type: brush, pencil, eraser, fill, color_adjust, text_overlay, "
         "gaussian_blur, clone_stamp, scatter_brush, pattern_brush, forward_warp, noop.\n"
-        f"Coordinates are integers in [0, {CANVAS_SIZE - 1}]. Path actions draw a segment "
-        "from start_point to end_point.\n"
-        "Respond with valid JSON only."
+        f"Canvas coordinates use single tokens: <x0>..<x{CANVAS_SIZE - 1}> for column, "
+        f"<y0>..<y{CANVAS_SIZE - 1}> for row. Color channels use <c0>..<c255>. "
+        "Path actions draw a segment from start_point to end_point.\n"
+        "Respond with the JSON object only."
     )
 
 
@@ -561,6 +563,7 @@ def _clamp_canvas_point(pt: Any) -> tuple[int, int]:
 
 
 _POINT_KEYS = ("position", "source", "destination", "start_point", "end_point")
+_COLOR_KEYS = ("color_rgba",)
 
 
 def _clamp_action_coords_for_model_output(data: dict[str, Any]) -> dict[str, Any]:
@@ -571,6 +574,38 @@ def _clamp_action_coords_for_model_output(data: dict[str, Any]) -> dict[str, Any
             c = _clamp_canvas_point(pt)
             out[key] = [c[0], c[1]]
     return out
+
+
+_SENTINEL_RE = re.compile(r"<([xyc])(\d+)>")
+
+
+def _emit_value(key: str, v: Any) -> str:
+    """JSON-encode ``v`` for action key ``key``.
+
+    For point keys we emit ``[<xN>,<yN>]`` and for color-channel keys
+    ``[<cR>,<cG>,<cB>,<cA>]``; everything else is normal ``json.dumps``.
+    The emitted text is not strict JSON but the brace-balance extractor and
+    :func:`_sentinels_to_ints` together restore strict JSON before parsing.
+    """
+    if key in _POINT_KEYS and isinstance(v, (list, tuple)) and len(v) >= 2:
+        return f"[<x{int(v[0])}>,<y{int(v[1])}>]"
+    if key in _COLOR_KEYS and isinstance(v, (list, tuple)) and len(v) == 4:
+        return "[" + ",".join(f"<c{int(c)}>" for c in v) + "]"
+    return json.dumps(v, separators=(",", ":"))
+
+
+def _emit_action(action: dict[str, Any]) -> str:
+    parts = [f"{json.dumps(k)}:{_emit_value(k, v)}" for k, v in action.items()]
+    return "{" + ",".join(parts) + "}"
+
+
+def _emit_chunk(actions: list[dict[str, Any]]) -> str:
+    return '{"actions":[' + ",".join(_emit_action(a) for a in actions) + "]}"
+
+
+def _sentinels_to_ints(text: str) -> str:
+    """Resolve every ``<xN>``/``<yN>``/``<cN>`` to its bare integer text."""
+    return _SENTINEL_RE.sub(lambda m: m.group(2), text)
 
 
 def parse_action(data: dict) -> Action:
@@ -617,13 +652,22 @@ class ActionChunk(BaseModel):
         return all(a.action_type == "noop" for a in self.actions)
 
     def to_json_str(self) -> str:
-        """Serialize to the JSON string format used in training targets."""
-        return json.dumps({"actions": [a.model_dump() for a in self.actions]}, separators=(",", ":"))
+        """Serialize to the sentinel-augmented JSON string used as training targets.
+
+        Coordinate and color-channel integers are emitted as single-token
+        sentinels (``<xN>``, ``<yN>``, ``<cN>``); see
+        :mod:`elysium.model.coord_tokens` for the wire format.
+        """
+        return _emit_chunk([a.model_dump() for a in self.actions])
 
     @classmethod
     def from_json_str(cls, raw: str, horizon: int = 5) -> "ActionChunk":
-        """Parse model-generated JSON string into an ActionChunk."""
-        data = json.loads(raw)
+        """Parse the sentinel-augmented JSON string into an ActionChunk.
+
+        Strict JSON without sentinels is also accepted -- :func:`_sentinels_to_ints`
+        is a no-op on text that contains no sentinels.
+        """
+        data = json.loads(_sentinels_to_ints(raw))
         actions = [parse_action(a) for a in data["actions"]]
         return cls(actions=actions, horizon=horizon)
 

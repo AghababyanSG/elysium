@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 
-from elysium.schemas.actions import build_system_prompt
+from elysium.schemas.actions import ActionChunk, build_system_prompt, parse_action
 
 __all__ = ["build_dataset"]
 
@@ -99,7 +99,10 @@ def _to_conversation(
     Returns:
         Dict with "messages", "gt_actions", and "next_image" fields.
     """
-    action_json = json.dumps({"actions": chunk["actions"]}, separators=(",", ":"))
+    # Route through ActionChunk so coord/color values are emitted as
+    # <xN>/<yN>/<cN> sentinel tokens (see elysium.model.coord_tokens).
+    parsed = [parse_action(a) for a in chunk["actions"]]
+    action_json = ActionChunk(actions=parsed, horizon=horizon).to_json_str()
 
     image_path = _relative_path(chunk["observation_frame"])
     return {
