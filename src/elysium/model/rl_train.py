@@ -1,8 +1,12 @@
 """GRPO policy-gradient training for the chunk-prediction model.
 
-Uses TRL's GRPOTrainer with a pure visual (SSIM) reward.  The SFT checkpoint
-is loaded with its LoRA adapters as the policy; the frozen reference policy is
-obtained via disable_adapter() on the same PEFT model — no extra copy needed.
+Uses TRL's GRPOTrainer with the coverage-weighted SSIM-patch visual reward
+defined in ``elysium.model.reward.visual_reward`` plus a +0.05 additive
+format-valid bonus for non-terminal parse-valid completions (Phase 4).
+Parse-invalid completions short-circuit to a reward of -1.0. The SFT
+checkpoint is loaded with its LoRA adapters as the policy; the frozen
+reference policy is obtained via ``disable_adapter()`` on the same PEFT
+model — no extra copy needed.
 
 Config: configs/train.yaml  (rl section)
 Data:   data/processed/     (HuggingFace DatasetDict; uses gt_actions to
@@ -32,6 +36,54 @@ from PIL import Image
 from pydantic import ValidationError
 from transformers import TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
+
+
+def _bridge_qwen35vl_token_type_ids(model: Any, processor: Any) -> None:
+    """Bridge Qwen3.5-VL's ``mm_token_type_ids`` to TRL's ``token_type_ids``.
+
+    Upstream TRL hardcodes ``token_type_ids`` as the only multimodal-mask kwarg
+    it knows how to thread end-to-end (extend with zeros across the completion
+    span, store on the inputs dict, forward through ``_compute_loss``). The
+    Qwen3.5-VL processor emits the same signal under the name
+    ``mm_token_type_ids``, and the model's forward expects that exact name.
+
+    Rather than re-implement TRL's plumbing for the alternate name, we rename
+    on both sides of the trainer: processor output ``mm_token_type_ids`` →
+    ``token_type_ids`` (so TRL handles it), and model forward kwarg
+    ``token_type_ids`` → ``mm_token_type_ids`` (so the model still sees what
+    it expects).
+    """
+    proc_cls = type(processor)
+    if not getattr(proc_cls, "_elysium_renamed_mm_token_type_ids", False):
+        _orig_proc_call = proc_cls.__call__
+
+        def _proc_call(self, *args, **kwargs):
+            out = _orig_proc_call(self, *args, **kwargs)
+            data = getattr(out, "data", out)
+            if isinstance(data, dict) and "mm_token_type_ids" in data:
+                data["token_type_ids"] = data.pop("mm_token_type_ids")
+            return out
+
+        proc_cls.__call__ = _proc_call
+        proc_cls._elysium_renamed_mm_token_type_ids = True
+
+    _orig_model_forward = model.forward
+
+    def _model_forward(*args, **kwargs):
+        if "token_type_ids" in kwargs and "mm_token_type_ids" not in kwargs:
+            kwargs["mm_token_type_ids"] = kwargs.pop("token_type_ids")
+        return _orig_model_forward(*args, **kwargs)
+
+    model.forward = _model_forward
+
+    _orig_model_generate = model.generate
+
+    def _model_generate(*args, **kwargs):
+        if "token_type_ids" in kwargs and "mm_token_type_ids" not in kwargs:
+            kwargs["mm_token_type_ids"] = kwargs.pop("token_type_ids")
+        return _orig_model_generate(*args, **kwargs)
+
+    model.generate = _model_generate
 
 from elysium.engine.canvas import execute_chunk
 from elysium.log import logger
@@ -231,7 +283,15 @@ def _make_reward_fn(horizon: int) -> Any:
                 gt_chunk = ActionChunk.from_json_str(gt_json, horizon)
                 gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
                 gt_cache[gt_key] = gt_target
-            rewards.append(visual_reward(predicted, gt_target, canvas_np))
+            r = visual_reward(predicted, gt_target, canvas_np)
+            # Phase 4.2: +0.05 additive bonus for non-terminal parse-valid
+            # completions, so a near-correct-but-wrong-colour stroke scores
+            # strictly above 0 — keeping that band distinguishable from the
+            # noop attractor (terminal completions stay at the visual_reward
+            # baseline, which is ≤ 0 for non-terminal GT rows).
+            if not pred_chunk.is_terminal:
+                r = float(np.clip(r + 0.05, -1.0, 1.0))
+            rewards.append(r)
 
         return rewards
 
@@ -358,6 +418,16 @@ def run_rl_training(
     noop_json = ActionChunk.noop_chunk(horizon).to_json_str()
     noop_token_len = len(processor.tokenizer(noop_json, add_special_tokens=False)["input_ids"])
     logger.info("Noop-JSON token length for collapse detection: {}", noop_token_len)
+
+    # TRL's GRPOTrainer.__init__ sets model.warnings_issued["estimate_tokens"];
+    # Qwen3.5-VL's composite class doesn't define this attribute, and PEFT's
+    # __getattr__ falls through to the base model, so we seed it on the inner
+    # module to keep the trainer's warning-dedup bookkeeping happy.
+    _inner = model.get_base_model() if hasattr(model, "get_base_model") else model
+    if not hasattr(_inner, "warnings_issued"):
+        _inner.warnings_issued = {}
+
+    _bridge_qwen35vl_token_type_ids(model, processor)
 
     trainer = GRPOTrainer(
         model=model,
