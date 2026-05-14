@@ -1,9 +1,15 @@
-# Elysium VLA — Remote Handoff (2026-05-13)
+# Elysium VLA — Remote Handoff (2026-05-13, updated evening)
 
 This document is a self-contained handoff so you can resume work on a remote
 GPU machine. It captures the project context, the architecture roadmap, what
 was done in Phase 1, and the exact prompt to paste into Claude on the remote
 machine.
+
+**Latest update:** 2026-05-13 evening. Phase 1.8 SFT is now done (final
+`eval_loss = 0.31`, token accuracy `0.925`, smoke-tested green) after a
+structural fix to make the new coord-token rows trainable. Phase 1.9 RL is
+still pending. See "2026-05-13 evening session — what landed" below for the
+full diff.
 
 ---
 
@@ -13,39 +19,155 @@ machine.
 > I'm continuing work on the Elysium VLA project. Read these files in order
 > before doing anything else:
 >
->   1. plans/HANDOFF.md  -- this handoff document (the full prior conversation
->      context, what's done, what's next).
->   2. plans/architecture-roadmap.md  -- the phased roadmap with checkboxes;
->      Phase 1 sub-steps 1.1-1.7 are already complete in the code (boxes ticked).
->      Phase 1.8 (full SFT) and 1.9 (RL) remain to be run on this GPU.
+>   1. plans/HANDOFF.md  -- read the "2026-05-13 evening session" section
+>      first, then skim the rest for context. Phase 1.8 is now DONE; Phase
+>      1.9 RL is the next concrete step.
+>   2. plans/architecture-roadmap.md  -- 1.1-1.8 are ticked; 1.9 pending.
 >   3. CLAUDE.md  -- the project's persistent code rules.
 >
-> Current state:
->   - Branch: training-upgrade
->   - Phase 1 coord-token binning is implemented and tested (33 pytest
->     passing). data/processed already contains sentinel-encoded actions.
->   - configs/train.yaml is preset for THIS remote machine: model.use_unsloth
->     = false, model.load_in_4bit = false, batch_size = 4, gradient
->     accumulation = 4, gradient_checkpointing = true.
->   - The Unsloth path is preserved behind use_unsloth=true; do NOT remove it.
+> Current state (as of the evening update):
+>   - Branch: training-upgrade. NOT committed yet -- there are uncommitted
+>     edits to coord_tokens.py, loading.py, train.py, and this file. Commit
+>     before doing anything heavy if you want a clean rollback point.
+>   - SFT checkpoint at models/checkpoints/final is the GOOD one (with
+>     trainable coord-token rows). The earlier broken run is archived at
+>     models/checkpoints/final_run1_broken_no_trainable_tokens for reference.
+>   - 33 pytest tests pass. data/processed has sentinel-encoded actions
+>     (219 train / 55 val).
+>   - configs/train.yaml is preset for the remote GB10 (use_unsloth=false,
+>     load_in_4bit=false). Unsloth path preserved behind use_unsloth=true.
+>   - Activate the venv before running anything:
+>       source .venv/bin/activate
 >
 > What I want next:
->   1. Verify GPU + environment: `nvidia-smi`, `python -m pytest tests/ -q`.
->   2. Run Phase 1.8 SFT on the full dataset:
->        python scripts/train.py --skip-prepare 2>&1 | tee logs/sft_phase1.log
->      Record final eval_loss as the Phase-1 baseline.
->   3. Smoke-test inference on the SFT checkpoint with one prompt.
->   4. Run Phase 1.9 RL:
+>   1. Sanity: nvidia-smi; python -m pytest tests/ -q  (expect 33 passed).
+>   2. Smoke-test the SFT checkpoint at greedy + sample to confirm it still
+>      produces parseable sentinel-encoded JSON.
+>   3. Run Phase 1.9 RL:
 >        python scripts/train.py --rl --skip-prepare 2>&1 | tee logs/rl_phase1.log
 >      Record completions/mean_length and mean visual_reward as the Phase-1
 >      baselines for later comparisons.
->   5. Tick 1.8 and 1.9 in plans/architecture-roadmap.md, then proceed to
+>   4. Tick 1.9 in plans/architecture-roadmap.md, commit, then proceed to
 >      Phase 2 (unfreeze vision LoRA) -- it's a one-line config change plus
 >      retraining.
 >
 > Working directory is the repo root. Do not touch CLAUDE.md or rewrite the
 > coord-token module. Ask before running any destructive git operations.
 > ```
+
+---
+
+## 2026-05-13 evening session — what landed
+
+**TL;DR:** Phase 1.8 SFT is done after fixing a structural bug; Phase 1.9 RL
+is the next step.
+
+### The bug we hit
+
+Pre-evening, the LoRA config in `src/elysium/model/loading.py:apply_lora`
+used `target_modules: "all-linear"` with `modules_to_save: null` and no
+`trainable_token_indices`. PEFT freezes everything except LoRA adapters on
+the targeted linears. That meant the 768 newly-added coord-token rows in
+`embed_tokens` (and the tied `lm_head`) **stayed at their digit-mean init
+for the entire training run**, with no gradient path to update them.
+
+Consequence: even though SFT visibly drove eval_loss from 1.51 -> 0.92 over
+11 epochs, the model never actually learned to prefer the `<xN>/<yN>/<cN>`
+sentinels over plain decimal-digit tokens in coord slots. Under **greedy**
+decode the model emitted JSON like
+`"start_point":[1,4]`, `"color_rgba":[0,0,0,5]` -- plain decimals. Under
+**sample temp=1.0** it produced a chaotic mix of wrong-namespace sentinels
+(`<y52><y55><y55>` stuffed into a color slot). Either way the parser
+rejected the output and inference fell through to noop.
+
+The handoff already anticipated this class of failure when it said:
+> First-epoch train-loss spike. Adding 768 new tokens with digit-mean init
+> makes their initial logits poor; per-step CE during training inflates to
+> ~12-30 until the LM head recalibrates.
+The LM head can't recalibrate if its rows are frozen.
+
+### The fix
+
+PEFT 0.13+ supports `LoraConfig.trainable_token_indices` -- a focused way
+to make specific embedding rows learnable on top of a LoRA adapter without
+unfreezing the entire `embed_tokens`/`lm_head` (which would be ~1.5B extra
+params on Qwen3.5-4B). We use this for the 768 coord-token rows
+(~1.97M extra trainable params).
+
+Changes:
+  - `src/elysium/model/coord_tokens.py` -- new helper `coord_token_ids(tokenizer)`
+    returning the list of token IDs for the 768 sentinels. Exported in
+    `__all__`.
+  - `src/elysium/model/loading.py:apply_lora` -- accepts an optional
+    `trainable_token_indices` kwarg and forwards it to `LoraConfig`. Default
+    `None` preserves prior behaviour.
+  - `src/elysium/model/train.py:_build_hf_model_and_collator` -- after
+    `ensure_coord_tokens`, computes `coord_token_ids(processor.tokenizer)`
+    and passes it to `apply_lora`. A comment explains why it's required.
+  - `src/elysium/model/train.py` also gained `_strip_none_content`, a
+    separate fix for an unrelated bug that surfaced earlier today: HF
+    datasets unifies the arrow schema across all `messages[].content` items,
+    so text dicts ended up with stray `image: None` keys. Qwen3.5's chat
+    template checks `'image' in item` by key presence, which raised
+    "System message cannot contain images" on the system text and would
+    have silently rendered the user instruction text as `<|image_pad|>`.
+    The helper strips None-valued keys from content dicts before
+    `apply_chat_template`; both the HF and Unsloth collator paths now
+    route through it.
+
+Tied-embeddings check: Qwen3.5-4B has `tie_word_embeddings=True`
+(verified at runtime). The TrainableTokens delta sits on `embed_tokens`
+and flows through to the LM head automatically -- this is the property
+the fix relies on. If we ever move to a model with untied heads, we'd
+need to extend the delta to the LM head explicitly.
+
+### Re-run results
+
+Run 1 (broken, no trainable coord rows, 11 epochs to early-stop):
+  eval_loss 1.51 -> 1.12 -> 1.02 -> 0.97 -> 0.94 -> 0.94 -> 0.92 -> 0.93 -> 0.92 -> 0.93 -> 0.94
+  Final eval_mean_token_accuracy 0.84. Greedy smoke = decimal-digit garbage.
+
+Run 2 (fixed, full 12 epochs):
+  eval_loss 1.35 -> 0.71 -> 0.53 -> 0.46 -> 0.40 -> 0.37 -> 0.35 -> 0.34
+                 -> 0.32 -> 0.32 -> 0.31 -> **0.31**
+  Final eval_mean_token_accuracy **0.925**. Greedy smoke output:
+    {"actions":[{"action_type":"pencil",
+                 "color_rgba":[<c0>,<c0>,<c0>,<c255>],
+                 "start_point":[<x109>,<y82>],
+                 "end_point":[<x109>,<y84>]}, ...]}
+  Parser accepts, executor runs cleanly. Sample temp=1.0 also parses.
+
+### Files & artifacts on disk
+
+  - `models/checkpoints/final/` -- the good run-2 SFT checkpoint. LoRA
+    adapter (156 MB) + processor/tokenizer with the 768 added tokens.
+  - `models/checkpoints/final_run1_broken_no_trainable_tokens/` -- archive
+    of the broken run-1 checkpoint, kept for reference. Delete when
+    confident.
+  - `logs/sft_phase1.log` -- the good run.
+  - `logs/sft_phase1_run1_broken.log` -- the broken run.
+  - Working tree has uncommitted edits to: `plans/HANDOFF.md`,
+    `plans/architecture-roadmap.md`, `src/elysium/model/coord_tokens.py`,
+    `src/elysium/model/loading.py`, `src/elysium/model/train.py`.
+    Consider committing before kicking off Phase 1.9.
+
+### What still warrants thought
+
+  - The dataset is still 219/55 chunks (the canvas_size=256 filter,
+    documented below under "Known issues"). Phase 1.9 RL will run on this
+    thin slice. If reward variance collapses (`frac_reward_zero_std`
+    high), revisit the 512 -> 256 rescale to recover more sessions before
+    judging Phase 2-4.
+  - `load_adapter_for_inference` still emits a "resized base embeddings"
+    warning at load time. That's now slightly misleading: with the fix in
+    place the resize is the *base* for the digit-mean init, and PEFT
+    overlays the trained delta on top. Leave it for now -- the message is
+    technically still accurate ("init fallback only"), but worth tightening
+    if/when you next pass through that file.
+  - `min_gt_pixels: 200` in configs/train.yaml's `rl:` block was tuned to
+    the previous (pre-binning) policy. With the much sharper post-binning
+    policy, more rows may saturate; if RL collapses immediately, try
+    bumping to 300-400 to push training onto the harder tail.
 
 ---
 
