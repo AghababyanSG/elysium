@@ -11,7 +11,12 @@ lora:
   r: 16
   alpha: 32
   target_modules: "all-linear"
-  finetune_vision_layers: false
+  # Phase 2: unfreeze vision LoRA. With `target_modules: all-linear`, LoRA
+  # adapters were already attached to the vision tower's Linear modules; this
+  # flag controls whether `_freeze_vision_tower` runs after `apply_lora`. True
+  # → keep vision adapters trainable so the encoder can adapt to 512² synthetic
+  # canvases that the natural-photo-pretrained ViT cannot perceive precisely.
+  finetune_vision_layers: true
   finetune_language_layers: true
   finetune_attention_modules: true
   finetune_mlp_modules: true
@@ -26,7 +31,9 @@ training:
   epochs: 12
   optimizer: "adamw_torch"
   gradient_checkpointing: true
-  max_seq_length: 768
+  # Bumped 768 → 1024 for Phase 3 (history injection). Text-only p95 hits 594
+  # tokens and the image adds ~100-300 image tokens, so 768 is too tight.
+  max_seq_length: 1024
   warmup_steps: 50
   logging_steps: 10
   weight_decay: 0.01
@@ -38,6 +45,12 @@ training:
 
 data:
   action_horizon: 2
+  # Phase 3: number of past executed chunks to inject as text into the user
+  # message ("Recent actions:\n<chunk_-2>\n<chunk_-1>\n\nInstruction: ...").
+  # 0 disables history. Set to 2 by default — at horizon=2 each prior chunk
+  # is ~40-90 tokens (sentinel-encoded), so N=2 adds ~80-180 tokens, well
+  # within the 768-token seq budget.
+  history_length: 2
   rdp_epsilon: 2.0
   train_split: 0.8
   chunk_stride: 1
@@ -71,7 +84,9 @@ rl:
   # actually move the policy.
   learning_rate: 5.0e-6
   per_device_batch_size: 4
-  gradient_accumulation_steps: 1
+  # Bumped 1→2 so generation_batch_size (per_device * grad_accum = 8) is
+  # divisible by num_generations (8), per TRL's GRPOConfig invariant.
+  gradient_accumulation_steps: 2
   num_generations: 8
   # Slightly above 1.0 to widen within-group reward variance: at temp=1.0 the
   # post-SFT policy collapsed many groups to identical 29-token GT mimics
