@@ -36,6 +36,7 @@ __all__ = [
     "Y_PREFIX",
     "C_PREFIX",
     "all_coord_tokens",
+    "coord_token_ids",
     "encode_x",
     "encode_y",
     "encode_c",
@@ -60,6 +61,24 @@ def all_coord_tokens() -> list[str]:
         + [f"<{Y_PREFIX}{i}>" for i in range(N_VALUES)]
         + [f"<{C_PREFIX}{i}>" for i in range(N_VALUES)]
     )
+
+
+def coord_token_ids(tokenizer: Any) -> list[int]:
+    """Return token IDs of every coord/color sentinel for the given tokenizer.
+
+    Use this to mark the new vocabulary rows as trainable via PEFT's
+    ``LoraConfig.trainable_token_indices`` — without it the rows stay frozen
+    at their digit-mean init and the model cannot learn to prefer them over
+    the existing decimal-digit tokens in argmax decoding.
+    """
+    ids: list[int] = []
+    for tok in all_coord_tokens():
+        tid = tokenizer.convert_tokens_to_ids(tok)
+        assert isinstance(tid, int) and tid >= 0, (
+            f"tokenizer has no id for {tok!r} -- call add_coord_tokens first"
+        )
+        ids.append(tid)
+    return ids
 
 
 def encode_x(n: int) -> str:

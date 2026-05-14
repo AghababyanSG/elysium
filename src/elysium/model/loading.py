@@ -102,10 +102,16 @@ def apply_lora(
     lora_cfg: dict[str, Any],
     *,
     task_type: str = "CAUSAL_LM",
+    trainable_token_indices: list[int] | None = None,
 ) -> Any:
-    """Wrap ``model`` with PEFT LoRA adapters from a config dict."""
+    """Wrap ``model`` with PEFT LoRA adapters from a config dict.
+
+    ``trainable_token_indices`` makes specific embed_tokens / lm_head rows
+    trainable on top of the LoRA adapter — used for the Phase 1 coord tokens
+    so the new rows actually learn instead of staying frozen at init.
+    """
     target_modules = lora_cfg["target_modules"]
-    config = LoraConfig(
+    kwargs: dict[str, Any] = dict(
         r=int(lora_cfg["r"]),
         lora_alpha=int(lora_cfg["alpha"]),
         lora_dropout=float(lora_cfg["lora_dropout"]),
@@ -113,6 +119,9 @@ def apply_lora(
         target_modules=target_modules,
         task_type=task_type,
     )
+    if trainable_token_indices is not None:
+        kwargs["trainable_token_indices"] = list(trainable_token_indices)
+    config = LoraConfig(**kwargs)
     model = get_peft_model(model, config)
     model.print_trainable_parameters()
     return model

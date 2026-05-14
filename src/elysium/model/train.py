@@ -44,6 +44,28 @@ def _load_config(config_path: Path) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def _strip_none_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # HF datasets unifies the arrow schema across all `content` items, so text
+    # dicts end up with a stray `image: None` key (and image dicts with
+    # `text: None`). The Qwen3.5 chat template checks key *presence* via
+    # `'image' in item`, which then (a) raises "System message cannot contain
+    # images" on system text and (b) would silently emit <|image_pad|> in place
+    # of user instruction text. Strip None-valued keys from every content dict.
+    clean: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_content = [
+                {k: v for k, v in item.items() if v is not None}
+                if isinstance(item, dict) else item
+                for item in content
+            ]
+            clean.append({**msg, "content": new_content})
+        else:
+            clean.append(msg)
+    return clean
+
+
 # ---------------------------------------------------------------------------
 # Unsloth path (laptop / QLoRA)
 # ---------------------------------------------------------------------------
@@ -100,7 +122,7 @@ def _build_unsloth_model_and_collator(
         def __call__(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
             pc: list[dict[str, Any]] = []
             for ex in examples:
-                msgs = ex["messages"]
+                msgs = _strip_none_content(ex["messages"])
                 assert msgs[-1]["role"] == "assistant"
                 img = ensure_rgb_canvas_size(Image.open(ex["image"]).convert("RGB"))
                 pc.append({
@@ -174,7 +196,7 @@ class _HFActionVisionDataCollator:
         prompt_texts: list[str] = []
         images: list[Image.Image] = []
         for ex in examples:
-            msgs = ex["messages"]
+            msgs = _strip_none_content(ex["messages"])
             assert msgs[-1]["role"] == "assistant"
             img = ensure_rgb_canvas_size(Image.open(ex["image"]).convert("RGB"))
             full_texts.append(self._apply_template(msgs, add_generation_prompt=False))
@@ -239,6 +261,7 @@ def _build_hf_model_and_collator(
     train_cfg: dict[str, Any],
 ) -> tuple[Any, Any, Any]:
     # Local import to avoid pulling Unsloth/peft for users on the Unsloth path.
+    from elysium.model.coord_tokens import coord_token_ids
     from elysium.model.loading import (
         apply_lora,
         ensure_coord_tokens,
@@ -260,7 +283,11 @@ def _build_hf_model_and_collator(
     if not lora_cfg.get("finetune_vision_layers", False):
         _freeze_vision_tower(model)
 
-    model = apply_lora(model, lora_cfg)
+    # Without this the 768 new embed_tokens/lm_head rows stay frozen at their
+    # digit-mean init and the LM head never learns to prefer <cN>/<xN>/<yN>
+    # over plain decimal digits (greedy decode silently emits decimals).
+    coord_ids = coord_token_ids(getattr(processor, "tokenizer", processor))
+    model = apply_lora(model, lora_cfg, trainable_token_indices=coord_ids)
     collator = _HFActionVisionDataCollator(
         processor=processor, max_seq_length=train_cfg["max_seq_length"]
     )
