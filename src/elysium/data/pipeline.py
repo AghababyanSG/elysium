@@ -59,13 +59,18 @@ def run_pipeline(
     logger.info("Step 2/3: Chunking (horizon=%d, stride=%d)", horizon, stride)
     chunk_all(paths.compressed, paths.frames, paths.chunks, horizon=horizon, stride=stride)
 
-    logger.info("Step 3/3: Building dataset (train_split=%.2f)", train_split)
+    history_length = int(data_cfg.get("history_length", 0))
+    logger.info(
+        "Step 3/3: Building dataset (train_split=%.2f, history_length=%d)",
+        train_split, history_length,
+    )
     build_dataset(
         paths.chunks,
         instr_path,
         paths.processed,
         horizon=horizon,
         train_split=train_split,
+        history_length=history_length,
     )
 
     logger.info("Data pipeline complete.")

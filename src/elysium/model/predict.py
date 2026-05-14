@@ -143,6 +143,7 @@ class Predictor:
         temperature: float = 1.0,
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
+        history_length: int = 0,
     ) -> None:
         self.model = model
         self.processor = processor
@@ -154,9 +155,15 @@ class Predictor:
         self.temperature = temperature
         self.top_p = top_p
         self.repetition_penalty = repetition_penalty
+        self.history_length = history_length
 
     @torch.inference_mode()  # type: ignore[misc]
-    def _predict_chunk(self, canvas_pil: Image.Image, instruction: str) -> ActionChunk:
+    def _predict_chunk(
+        self,
+        canvas_pil: Image.Image,
+        instruction: str,
+        history_actions: list[str] | None = None,
+    ) -> ActionChunk:
         """Run one model forward pass and parse the output into an ActionChunk.
 
         Generation params mirror the RL training distribution (sample at
@@ -166,7 +173,11 @@ class Predictor:
         the noop chunk on step 0 and produces a blank canvas.
         """
         inputs = build_generation_processor_inputs(
-            self.processor, canvas_pil, instruction, self.horizon
+            self.processor,
+            canvas_pil,
+            instruction,
+            self.horizon,
+            history_actions=history_actions,
         )
         dtype = model_compute_dtype(self.model)
         inputs = {
@@ -223,10 +234,13 @@ class Predictor:
         Returns:
             Tuple of (final edited image, list of all ActionChunks executed).
         """
+        from collections import deque
+
         image = ensure_rgb_canvas_size(image)
         original = _image_to_float32(image)
         canvas = original.copy()
         executed_chunks: list[ActionChunk] = []
+        history: deque[str] = deque(maxlen=max(0, self.history_length))
 
         if frames_dir is not None:
             frames_dir.mkdir(parents=True, exist_ok=True)
@@ -253,7 +267,9 @@ class Predictor:
                 break
 
             canvas_pil = _float32_to_pil(canvas)
-            chunk = self._predict_chunk(canvas_pil, instruction)
+            chunk = self._predict_chunk(
+                canvas_pil, instruction, history_actions=list(history) if history else None
+            )
 
             if chunk.is_terminal:
                 logger.info("Step {}: model signalled completion (all-noop chunk)", step)
@@ -263,8 +279,12 @@ class Predictor:
                 partial_actions = chunk.actions[: self.ensemble_k]
                 partial_chunk = ActionChunk(actions=partial_actions, horizon=self.ensemble_k)
                 canvas = execute_chunk(canvas, partial_chunk, original=original)
+                if self.history_length > 0:
+                    history.append(partial_chunk.to_json_str())
             else:
                 canvas = execute_chunk(canvas, chunk, original=original)
+                if self.history_length > 0:
+                    history.append(chunk.to_json_str())
 
             executed_chunks.append(chunk)
             logger.info("Step {}: executed chunk ({} actions)", step, len(chunk.actions))
@@ -308,7 +328,9 @@ def run_inference(
     """
     cfg = _load_config(config_path)
     infer_cfg = cfg.get("inference", {})
-    horizon = cfg["data"]["action_horizon"]
+    data_cfg = cfg.get("data", {})
+    horizon = data_cfg["action_horizon"]
+    history_length = int(data_cfg.get("history_length", 0))
     max_chunks = infer_cfg.get("max_chunks", 20)
     ensemble_k = infer_cfg.get("ensemble_execute_k", horizon)
     max_new_tokens = int(infer_cfg.get("max_new_tokens", 4096))
@@ -377,6 +399,7 @@ def run_inference(
         temperature=temperature,
         top_p=top_p,
         repetition_penalty=repetition_penalty,
+        history_length=history_length,
     )
 
     image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))

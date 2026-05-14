@@ -25,7 +25,24 @@ __all__ = [
 CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
 
 
-def action_conversation_messages(instruction: str, horizon: int) -> list[dict[str, Any]]:
+def _render_user_text(instruction: str, history_actions: list[str]) -> str:
+    """Format the user text segment with optional action history.
+
+    Mirrors the training-time rendering in ``elysium.data.format._render_user_text``
+    so inference prompts match exactly the format the policy was trained on.
+    """
+    if not history_actions:
+        return instruction
+    history_block = "\n".join(history_actions)
+    return f"Recent actions:\n{history_block}\n\nInstruction: {instruction}"
+
+
+def action_conversation_messages(
+    instruction: str,
+    horizon: int,
+    history_actions: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    user_text = _render_user_text(instruction, history_actions or [])
     return [
         {
             "role": "system",
@@ -35,7 +52,7 @@ def action_conversation_messages(instruction: str, horizon: int) -> list[dict[st
             "role": "user",
             "content": [
                 {"type": "image"},
-                {"type": "text", "text": instruction},
+                {"type": "text", "text": user_text},
             ],
         },
     ]
@@ -84,8 +101,11 @@ def build_generation_processor_inputs(
     canvas_pil: Any,
     instruction: str,
     horizon: int,
+    history_actions: list[str] | None = None,
 ) -> dict[str, Any]:
-    messages = action_conversation_messages(instruction, horizon)
+    messages = action_conversation_messages(
+        instruction, horizon, history_actions=history_actions
+    )
     text = apply_action_chat_template(
         processor,
         messages,

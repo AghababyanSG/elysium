@@ -80,11 +80,25 @@ def _load_chunks(chunks_dir: Path) -> dict[str, list[dict[str, Any]]]:
     return sessions
 
 
+def _render_user_text(instruction: str, history_actions: list[str]) -> str:
+    """Render the user text segment with optional action history.
+
+    History is rendered before the instruction as a labelled block so the
+    policy can attend to it for plan continuity without ambiguity about
+    where the directive ends.
+    """
+    if not history_actions:
+        return instruction
+    history_block = "\n".join(history_actions)
+    return f"Recent actions:\n{history_block}\n\nInstruction: {instruction}"
+
+
 def _to_conversation(
     chunk: dict[str, Any],
     instruction: str,
     horizon: int,
     next_observation_frame: str = "",
+    history_actions: list[str] | None = None,
 ) -> dict[str, Any]:
     """Convert a single chunk into a chat-template conversation record.
 
@@ -95,6 +109,9 @@ def _to_conversation(
         next_observation_frame: Path to the next chunk's observation frame,
             used as the visual reward target during RL training. Empty string
             if this is the last chunk in the session.
+        history_actions: Optional list of action-JSON strings for the
+            preceding chunks (oldest first). Injected into the user message
+            as a "Recent actions:" block before the instruction.
 
     Returns:
         Dict with "messages", "gt_actions", and "next_image" fields.
@@ -105,6 +122,7 @@ def _to_conversation(
     action_json = ActionChunk(actions=parsed, horizon=horizon).to_json_str()
 
     image_path = _relative_path(chunk["observation_frame"])
+    user_text = _render_user_text(instruction, history_actions or [])
     return {
         "image": image_path,
         "gt_actions": action_json,
@@ -118,7 +136,7 @@ def _to_conversation(
                 "role": "user",
                 "content": [
                     {"type": "image", "image": image_path},
-                    {"type": "text", "text": instruction},
+                    {"type": "text", "text": user_text},
                 ],
             },
             {
@@ -136,6 +154,7 @@ def build_dataset(
     horizon: int,
     train_split: float = 0.8,
     seed: int = 42,
+    history_length: int = 0,
 ) -> None:
     """Build and save a HuggingFace Dataset from chunks and instructions.
 
@@ -165,13 +184,30 @@ def build_dataset(
             skipped += len(chunks)
             continue
         recs: list[dict[str, Any]] = []
+        # Pre-render each chunk's action JSON once so the history window can
+        # reference earlier chunks without re-parsing on every step.
+        action_json_per_chunk: list[str] = []
+        for chunk in chunks:
+            parsed = [parse_action(a) for a in chunk["actions"]]
+            action_json_per_chunk.append(
+                ActionChunk(actions=parsed, horizon=horizon).to_json_str()
+            )
         for i, chunk in enumerate(chunks):
             next_frame = (
                 _relative_path(chunks[i + 1]["observation_frame"])
                 if i + 1 < len(chunks)
                 else ""
             )
-            recs.append(_to_conversation(chunk, instruction, horizon, next_frame))
+            history_actions = (
+                action_json_per_chunk[max(0, i - history_length) : i]
+                if history_length > 0
+                else []
+            )
+            recs.append(
+                _to_conversation(
+                    chunk, instruction, horizon, next_frame, history_actions=history_actions
+                )
+            )
         session_records[session_name] = recs
 
     if not session_records:
