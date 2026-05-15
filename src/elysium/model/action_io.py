@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from itertools import takewhile
 from typing import Any
 
 from elysium.log import logger
 from elysium.model.coord_tokens import resolve_tokens
 from elysium.schemas.actions import ActionChunk, NoopAction, build_system_prompt, parse_action
+
+_SENTINEL_RE = re.compile(r"<[xyc]\d+>")
 
 __all__ = [
     "CHAT_TEMPLATE_KWARGS",
@@ -182,6 +185,74 @@ def _first_balanced_json_object(s: str) -> str | None:
     return None
 
 
+def _iter_action_blobs_with_sentinels(chunk_blob: str) -> list[str]:
+    """Return each top-level action object's raw text from a chunk blob.
+
+    The returned strings preserve sentinels (no ``resolve_tokens`` applied),
+    so the caller can inspect sentinel placement before it is flattened to
+    integers. Skips over string contents and handles nested braces.
+    Returns an empty list if the blob doesn't contain an ``"actions":[ ... ]``
+    array at the top level.
+    """
+    actions_idx = chunk_blob.find('"actions":')
+    if actions_idx < 0:
+        return []
+    lbracket = chunk_blob.find("[", actions_idx)
+    if lbracket < 0:
+        return []
+    out: list[str] = []
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for i in range(lbracket + 1, len(chunk_blob)):
+        ch = chunk_blob[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                out.append(chunk_blob[start : i + 1])
+        elif ch == "]" and depth == 0:
+            break
+    return out
+
+
+def _has_infiltrated_sentinel(action_blob: str) -> bool:
+    """True if the action text contains a coord/color sentinel in a non-coord slot.
+
+    Trained chunks emit sentinels only as elements of an array literal
+    (``[<x10>,<y20>]`` or ``[<c0>,<c0>,<c0>,<c255>]``), so a legitimate
+    sentinel is preceded by ``[`` or ``,`` and followed by ``,`` or ``]``.
+    Anything else (e.g. ``"size":1<y90>`` after the model fused a stray
+    sentinel into a numeric scalar) is infiltration and the action must be
+    rejected — leaving it in lets ``resolve_tokens`` flatten the sentinel to
+    a plain integer that then either passes silently with the wrong value
+    or fails range validation (a silent action drop that costs the
+    Predictor its termination signal).
+    """
+    for m in _SENTINEL_RE.finditer(action_blob):
+        i, j = m.start(), m.end()
+        left = action_blob[i - 1] if i > 0 else ""
+        right = action_blob[j] if j < len(action_blob) else ""
+        if left not in "[," or right not in ",]":
+            return True
+    return False
+
+
 def extract_action_json(raw: str) -> str:
     """Return the first balanced ``{...}`` object as strict JSON text.
 
@@ -202,17 +273,45 @@ def extract_action_json(raw: str) -> str:
 def parse_action_chunk(raw_output: str, horizon: int) -> ActionChunk:
     """Parse a model-generated chunk, skipping individual malformed actions.
 
-    Each action is validated independently; if one fails (e.g. junk in a point
-    like ``[446,32dr]``), that action is dropped with a warning and the rest
-    are kept. Raises ``ValueError`` if every action fails validation or if the
-    ``actions`` list is empty -- silently returning a noop chunk would let the
-    RL reward function score a malformed generation as a clean completion.
+    Two failure modes are detected and skipped per-action:
+
+    1. Coord/color sentinel (``<xN>``/``<yN>``/``<cN>``) appearing in a
+       non-coord slot — e.g. ``"size":1<y90>`` after the model fused a stray
+       sentinel into a scalar field. Detected before ``resolve_tokens`` runs,
+       since otherwise the structural evidence is flattened away and the
+       action ends up either silently wrong (190 → "valid"-ish) or
+       range-rejected (silent drop that costs termination).
+    2. Pydantic / range / type validation errors on the parsed dict — e.g.
+       junk in a point like ``[446,32dr]``, or an out-of-range param.
+
+    Raises ``ValueError`` if every action fails validation or if the
+    ``actions`` list is empty — silently returning a noop chunk would let
+    the RL reward function score a malformed generation as a clean
+    completion.
     """
-    blob = extract_action_json(raw_output)
+    t = strip_redacted_thinking_lead(raw_output)
+    blob_with_sentinels = _first_balanced_json_object(t)
+    if blob_with_sentinels is None:
+        raise ValueError(f"No JSON object found in model output: {raw_output!r}")
+
+    action_blobs = _iter_action_blobs_with_sentinels(blob_with_sentinels)
+    infiltrated = {
+        i for i, b in enumerate(action_blobs) if _has_infiltrated_sentinel(b)
+    }
+
+    blob = resolve_tokens(blob_with_sentinels)
     raw = json.loads(blob)
+    if not isinstance(raw, dict) or "actions" not in raw:
+        raise ValueError(f"JSON must be an object with 'actions': {blob!r}")
     raw_actions = raw.get("actions") or []
     parsed = []
     for i, item in enumerate(raw_actions):
+        if i in infiltrated:
+            logger.warning(
+                "Skipping action {} (coord-token infiltration in non-coord slot): {}",
+                i, action_blobs[i],
+            )
+            continue
         try:
             parsed.append(parse_action(item))
         except (ValueError, TypeError, AssertionError) as exc:

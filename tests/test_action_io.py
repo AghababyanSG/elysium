@@ -107,6 +107,48 @@ class TestParseActionChunk(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_action_chunk('{"actions":[]}', 5)
 
+    def test_drops_action_with_sentinel_infiltration_in_scalar(self) -> None:
+        # Models occasionally fuse a stray sentinel into a numeric scalar:
+        # `"size":1<y90>`. resolve_tokens would flatten <y90> → 90 producing
+        # `"size":190`, which then either silently passes with the wrong value
+        # or fails range validation (size cap 50) and the action gets dropped
+        # without explanation — costing the Predictor its termination signal.
+        # The fix: detect the infiltration before resolve_tokens runs and
+        # reject the action explicitly.
+        good = '{"action_type":"noop"}'
+        bad = (
+            '{"action_type":"clone_stamp","source":[<x10>,<y20>],'
+            '"destination":[<x30>,<y40>],"size":1<y90>}'
+        )
+        raw = '{"actions":[' + good + "," + bad + "," + good + "]}"
+        chunk = parse_action_chunk(raw, 5)
+        self.assertEqual(len(chunk.actions), 2)
+        self.assertTrue(all(a.action_type == "noop" for a in chunk.actions))
+
+    def test_accepts_legitimate_sentinel_placement(self) -> None:
+        # Regression guard: a fully sentinel-encoded clone_stamp with sentinels
+        # only inside the point/color arrays must NOT be flagged as infiltrated.
+        raw = (
+            '{"actions":[{"action_type":"clone_stamp",'
+            '"source":[<x10>,<y20>],"destination":[<x30>,<y40>],"size":12}]}'
+        )
+        chunk = parse_action_chunk(raw, 1)
+        self.assertEqual(len(chunk.actions), 1)
+        self.assertEqual(chunk.actions[0].action_type, "clone_stamp")
+
+    def test_drops_action_with_sentinel_in_color_scalar(self) -> None:
+        # Same failure shape on a color channel: `"thickness":2<c5>` would
+        # become 25 after resolve_tokens — silently shifting param values.
+        good = '{"action_type":"noop"}'
+        bad = (
+            '{"action_type":"text_overlay","text":"hi","position":[<x10>,<y20>],'
+            '"color_rgba":[<c0>,<c0>,<c0>,<c255>],"thickness":2<c5>}'
+        )
+        raw = '{"actions":[' + good + "," + bad + "]}"
+        chunk = parse_action_chunk(raw, 5)
+        self.assertEqual(len(chunk.actions), 1)
+        self.assertEqual(chunk.actions[0].action_type, "noop")
+
 
 if __name__ == "__main__":
     unittest.main()

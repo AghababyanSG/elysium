@@ -441,6 +441,17 @@ Hard gate. Do not proceed to Phase 6 until Phases 1–4 are measured.
        infiltration in non-coordinate fields (closes the
        `"size":1<y90>` parse-failure mode that cost the dog inference
        its termination).
+       **Done 2026-05-15.** Added `_iter_action_blobs_with_sentinels`
+       and `_has_infiltrated_sentinel` in `action_io.py` so the
+       per-action sentinel-placement check runs **before**
+       `resolve_tokens` flattens the evidence; legitimate sentinels
+       must be surrounded by `[`/`,` and `,`/`]` (the only shape
+       `_emit_value` writes). Refactored `parse_action_chunk` to walk
+       the sentinel-preserved blob, mark infiltrated actions, drop
+       them with a clear warning, then resolve + pydantic-validate the
+       remainder. Tests: `test_drops_action_with_sentinel_infiltration_in_scalar`,
+       `test_drops_action_with_sentinel_in_color_scalar`,
+       `test_accepts_legitimate_sentinel_placement`. Full suite 37/37.
   - Action items applied here: none yet — this is the recorded
     decision. The deployed adapter pointer should be flipped to
     `models/checkpoints/final` wherever inference scripts default to
