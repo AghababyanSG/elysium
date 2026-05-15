@@ -437,6 +437,22 @@ Hard gate. Do not proceed to Phase 6 until Phases 1–4 are measured.
     b. (~1 day) Annotate 5–10 more sessions per instruction to push
        dataset past ~5K chunks. Single biggest expected quality
        lever; orthogonal to architecture.
+       **Done 2026-05-16.** Commit `5b907c2 "Added new data"` added 16
+       new sessions across 12 instructions, all wired into
+       `configs/instructions.yaml`. Coverage tilt is toward action
+       types that were thin in Phase 3:
+       - forward_warp: brad_pitt_smile, jolie_sad, jaap_stam_smile,
+         strawberry_heart, pirlo (mustache via warp)
+       - clone_stamp: honda_nsx_logo, stain (small-region clone),
+         doggy (extra removal session), boat (removal)
+       - text_overlay: honda_nsx_text (cursive in two regions)
+       - fill + pencil compositional: cyan_clouds×2, tree×2
+       - pencil-only: red_stickman, jaap_stam_hair (draw hair on
+         bald head)
+       Note: `data/processed/` was **not** regenerated in that commit,
+       so until Phase 5.3.1 runs `prepare_data.py` the new sessions
+       contribute zero training signal. The 5.3 sub-plan below picks
+       up the dataset refresh + downstream re-train.
     c. (~half day) Tighten `parse_action_chunk` to reject coord-token
        infiltration in non-coordinate fields (closes the
        `"size":1<y90>` parse-failure mode that cost the dog inference
@@ -457,6 +473,96 @@ Hard gate. Do not proceed to Phase 6 until Phases 1–4 are measured.
     `models/checkpoints/final` wherever inference scripts default to
     `rl_final`. Until then, `scripts/infer.py --checkpoint
     models/checkpoints/final/` is the recommended invocation.
+
+---
+
+## Phase 5.3 — Iterate post-NO-GO (data refresh + reward fix)
+
+Picks up after §5.2's two completed "next-best work" items (annotation
+expansion in (b), parser hardening in (c)). The remaining lever from
+§5.2 is (a) — drop the `+0.05` format bonus and re-run RL — but it
+only makes sense **after** an SFT re-train that ingests the new
+annotations, because new data changes the baseline against which any
+RL retry should be measured.
+
+Budget: ~10 min CPU (data prep) + ~2 h GB10 (SFT) + optional ~2 h
+GB10 (RL retry). No new code beyond a single-line reward edit.
+
+- [ ] **5.3.1 Regenerate processed dataset with the May 16 annotations**
+  - `python scripts/prepare_data.py`
+  - Phase 3 baseline: 219 train / 55 validation records. Sampling the
+    new sessions suggests +10–30% by raw event count, but the value
+    is coverage on previously-thin action types (forward_warp,
+    clone_stamp, text_overlay) rather than raw chunk count.
+  - Acceptance: `len(load_from_disk('data/processed')['train'])` > 219;
+    `tests/` still 37/37 green; spot-check one record from each of
+    `honda_nsx_text`, `cyan_clouds`, `strawberry_heart` shows
+    sentinel-encoded coords in the assistant message and
+    history-conditioned user text (`"Recent actions:\n…\n\nInstruction:
+    …"`) for non-zeroth chunks.
+  - Commit as `chore(data): regenerate processed dataset after May 16
+    annotations`.
+
+- [ ] **5.3.2 Re-run SFT on the bigger dataset**
+  - `python scripts/train.py --epochs 12 --skip-prepare` from GB10
+    (same hyperparams as Phase 3 — this experiment isolates dataset
+    size, not config).
+  - Acceptance:
+    - `eval_loss ≤ 0.182` AND `mean_token_accuracy ≥ 0.965` (Phase 3
+      baselines), OR
+    - if numerics are comparable, qualitative inference on the §5.1
+      five-prompt set **plus** three new-instruction probes
+      (e.g. `honda_nsx_text`, `cyan_clouds`, `strawberry_heart`)
+      shows no termination pathologies and a sensible action
+      distribution per instruction.
+  - If acceptance passes: replace `models/checkpoints/final/` with
+    the new adapter; record metrics here.
+  - If acceptance fails: investigate. Most likely cause = the new
+    sessions skew stroke statistics enough that a uniformly-sampled
+    epoch under-weights the Phase-3 instructions. Mitigation =
+    per-instruction sampling weights in
+    `elysium.data.format.build_dataset`, not more epochs.
+
+- [ ] **5.3.3 Gate: RL retry, yes or no?**
+  - **STOP** if 5.3.2 SFT alone produces clean termination + plausible
+    edits on the §5.1 comparison set AND on the new-instruction
+    probes. New SFT becomes the deployed model. Phase 5.3 ends here.
+  - **PROCEED to 5.3.4** only if a measurable, reward-shape-shaped
+    gap remains after 5.3.2 — e.g. policy still over-draws on
+    GT-terminal frames, or under-explores on a class of strokes the
+    SFT teacher rarely produced.
+  - Document the go/no-go inline in this checklist.
+
+- [ ] **5.3.4 (Optional) Drop `+0.05` format bonus, re-run RL**
+  - Single-line edit in `src/elysium/model/rl_train.py` around the
+    Phase-4.2 block:
+    ```python
+    if not pred_chunk.is_terminal:
+        r = float(np.clip(r + 0.05, -1.0, 1.0))
+    ```
+    Remove (or gate behind a config flag set to false). Parse-valid
+    completions still beat parse-invalid ones because parse-invalid
+    short-circuits to flat `-1.0` at the top of `_make_reward_fn`;
+    we're only removing the asymmetric attraction toward non-terminal
+    that §5.1 diagnosed as the termination-breaker.
+  - `python scripts/train.py --rl --skip-prepare` on the new SFT
+    checkpoint from 5.3.2.
+  - Acceptance: rerun §5.1's five-prompt qualitative comparison.
+    Required: termination ≥ Phase-3 SFT (≤ 30 chunks before terminal
+    noop on 4/5 prompts) **and** visual quality ≥ Phase-3 SFT.
+    Within-group reward variance is **not** the primary metric this
+    time — termination is.
+  - If pass: save to `models/checkpoints/rl_final` and deploy.
+  - If fail: roll back to whichever SFT (Phase-3 or 5.3.2) is
+    strongest by §5.1 criteria; document why the bonus removal alone
+    wasn't sufficient (likely answer: needs a multi-step rollout
+    reward, which is still out of scope at current dataset size).
+
+- **Out of scope for 5.3, unchanged from §5.2 NO-GO:**
+  - Multi-step / episodic rollout reward (would address termination
+    cleanly but needs nontrivial trainer surgery).
+  - Phase 6 (action expert lite).
+  - Phase 7 (learned critic).
 
 ---
 
