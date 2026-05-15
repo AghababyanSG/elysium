@@ -72,3 +72,14 @@ unsloth_compiled_cache/
 *.doc
 *.docx
 !data/**
+
+# uv
+uv*
+
+# HuggingFace / Torch caches
+.cache/
+.hf_cache/
+huggingface/
+
+# Local config overrides
+.claude/settings.local.json
