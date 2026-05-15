@@ -3,6 +3,7 @@ tasks:
     instruction: "remove the dog from the image"
     sessions:
       - doggy_20260512_212127
+      - doggy_20260516_013825
   sun_top_left:
     instruction: "draw a sun in top left corner"
     sessions:
@@ -51,6 +52,7 @@ tasks:
     instruction: "draw mustache on man"
     sessions:
       - pirlo_20260512_224724
+      - pirlo_20260516_014141
   zlatan:
     instruction: "draw mustache on face"
     sessions:
@@ -63,3 +65,53 @@ tasks:
     instruction: "draw a smiley face"
     sessions:
       - white_512_20260512_225307
+  stain:
+    instruction: "remove the stain"
+    sessions:
+      - stain_20260516_014856
+  tree:
+    instruction: "draw a tree"
+    sessions:
+      - white_512_20260516_015225
+      - white_512_20260516_015359
+  boat:
+    instruction: "remove the boat from the image"
+    sessions:
+      - boat_20260516_015608
+  honda_nsx_logo:
+    instruction: "remove the car's logo using clone tool"
+    sessions:
+      - honda-nsx-type-r_20260516_014434
+  honda_nsx_text:
+    instruction: "in the bottom and top parts of image write honda in orange, with font 'script'"
+    sessions:
+      - honda-nsx-type-r_20260516_014611
+  strawberry_heart:
+    instruction: "deform the strawberry to look like a heart, using warp tool"
+    sessions:
+      - strawberry_20260516_011626
+  brad_pitt_smile:
+    instruction: "make the man smile, using warp tool"
+    sessions:
+      - brad_pitt_20260516_012657
+  jolie_sad:
+    instruction: "make the woman sad, using warp tool"
+    sessions:
+      - jolie_20260516_012814
+  jaap_stam_smile:
+    instruction: "make the man smile using warp tool"
+    sessions:
+      - jaap_stam_20260516_012947
+  jaap_stam_hair:
+    instruction: "draw hair on man's head"
+    sessions:
+      - jaap_stam_20260516_013157
+  red_stickman:
+    instruction: "draw a red stickman on right side"
+    sessions:
+      - white_512_20260516_013339
+  cyan_clouds:
+    instruction: "fill the canvas with cyan and draw clouds"
+    sessions:
+      - white_512_20260516_013445
+      - white_512_20260516_013632
