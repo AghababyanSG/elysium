@@ -27,7 +27,11 @@ from transformers import StoppingCriteriaList
 
 from elysium.engine.canvas import execute_chunk
 from elysium.log import logger
-from elysium.model.action_io import build_generation_processor_inputs, parse_action_chunk
+from elysium.model.action_io import (
+    ActionParseError,
+    build_generation_processor_inputs,
+    parse_action_chunk,
+)
 from elysium.model.stop_on_json import JsonBalanceStoppingCriteria
 from elysium.schemas.actions import ActionChunk, CANVAS_SIZE
 
@@ -144,6 +148,7 @@ class Predictor:
         top_p: float = 1.0,
         repetition_penalty: float = 1.0,
         history_length: int = 0,
+        max_consecutive_parse_failures: int = 3,
     ) -> None:
         self.model = model
         self.processor = processor
@@ -156,6 +161,7 @@ class Predictor:
         self.top_p = top_p
         self.repetition_penalty = repetition_penalty
         self.history_length = history_length
+        self.max_consecutive_parse_failures = max_consecutive_parse_failures
 
     @torch.inference_mode()  # type: ignore[misc]
     def _predict_chunk(
@@ -205,14 +211,7 @@ class Predictor:
         raw_output = self.processor.decode(generated, skip_special_tokens=True)
 
         logger.info("Raw model output: {}", raw_output[:500])
-        try:
-            return parse_action_chunk(raw_output, self.horizon)
-        except Exception as exc:
-            logger.warning(
-                "Failed to parse model output ({}): {} — using noop chunk",
-                type(exc).__name__, exc,
-            )
-            return ActionChunk.noop_chunk(self.horizon)
+        return parse_action_chunk(raw_output, self.horizon)
 
     def run(
         self,
@@ -241,6 +240,7 @@ class Predictor:
         canvas = original.copy()
         executed_chunks: list[ActionChunk] = []
         history: deque[str] = deque(maxlen=max(0, self.history_length))
+        consecutive_parse_failures = 0
 
         if frames_dir is not None:
             frames_dir.mkdir(parents=True, exist_ok=True)
@@ -267,9 +267,29 @@ class Predictor:
                 break
 
             canvas_pil = _float32_to_pil(canvas)
-            chunk = self._predict_chunk(
-                canvas_pil, instruction, history_actions=list(history) if history else None
-            )
+            try:
+                chunk = self._predict_chunk(
+                    canvas_pil, instruction, history_actions=list(history) if history else None
+                )
+            except ActionParseError as exc:
+                consecutive_parse_failures += 1
+                # Distinct from terminal-noop: the parser dropped every action
+                # in this chunk (typically sentinel infiltration into a scalar
+                # slot). Skip canvas/history/executed-chunks update and let
+                # the next iteration resample with the same canvas.
+                logger.warning(
+                    "Step {}: parse failure {}/{} — skipping: {}",
+                    step, consecutive_parse_failures,
+                    self.max_consecutive_parse_failures, exc,
+                )
+                if consecutive_parse_failures >= self.max_consecutive_parse_failures:
+                    logger.warning(
+                        "Step {}: parse-failure budget exhausted ({}); stopping inference",
+                        step, self.max_consecutive_parse_failures,
+                    )
+                    break
+                continue
+            consecutive_parse_failures = 0
 
             if chunk.is_terminal:
                 logger.info("Step {}: model signalled completion (all-noop chunk)", step)
@@ -338,6 +358,9 @@ def run_inference(
     temperature = float(infer_cfg.get("temperature", 1.0))
     top_p = float(infer_cfg.get("top_p", 1.0))
     repetition_penalty = float(infer_cfg.get("repetition_penalty", 1.0))
+    max_consecutive_parse_failures = int(
+        infer_cfg.get("max_consecutive_parse_failures", 3)
+    )
 
     base_model = cfg["model"]["name"]
     local_only = base_model in cached_repo_ids()
@@ -400,6 +423,7 @@ def run_inference(
         top_p=top_p,
         repetition_penalty=repetition_penalty,
         history_length=history_length,
+        max_consecutive_parse_failures=max_consecutive_parse_failures,
     )
 
     image = ensure_rgb_canvas_size(Image.open(image_path).convert("RGB"))

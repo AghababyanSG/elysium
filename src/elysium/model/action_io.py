@@ -22,7 +22,21 @@ __all__ = [
     "json_balance_advance",
     "extract_action_json",
     "parse_action_chunk",
+    "ActionParseError",
 ]
+
+
+class ActionParseError(ValueError):
+    """Raised by ``parse_action_chunk`` when every action in the chunk failed
+    validation (or the actions list was empty).
+
+    Subclasses ``ValueError`` for backwards compatibility — older callers
+    catching ``ValueError`` continue to work. New callers (the inference
+    loop in ``predict.Predictor.run``) catch the more specific type to
+    distinguish "parser rejected every action" from a model-emitted
+    terminal-noop chunk; conflating the two was the root cause of the
+    Phase 5.4.1 false-termination bug.
+    """
 
 
 CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
@@ -292,7 +306,9 @@ def parse_action_chunk(raw_output: str, horizon: int) -> ActionChunk:
     t = strip_redacted_thinking_lead(raw_output)
     blob_with_sentinels = _first_balanced_json_object(t)
     if blob_with_sentinels is None:
-        raise ValueError(f"No JSON object found in model output: {raw_output!r}")
+        raise ActionParseError(
+            f"No balanced JSON object in model output: {raw_output!r}"
+        )
 
     action_blobs = _iter_action_blobs_with_sentinels(blob_with_sentinels)
     infiltrated = {
@@ -300,9 +316,16 @@ def parse_action_chunk(raw_output: str, horizon: int) -> ActionChunk:
     }
 
     blob = resolve_tokens(blob_with_sentinels)
-    raw = json.loads(blob)
+    try:
+        raw = json.loads(blob)
+    except json.JSONDecodeError as exc:
+        raise ActionParseError(
+            f"json.loads failed on resolved blob ({exc}): {blob!r}"
+        ) from exc
     if not isinstance(raw, dict) or "actions" not in raw:
-        raise ValueError(f"JSON must be an object with 'actions': {blob!r}")
+        raise ActionParseError(
+            f"Top-level JSON missing 'actions' key: {blob!r}"
+        )
     raw_actions = raw.get("actions") or []
     parsed = []
     for i, item in enumerate(raw_actions):
@@ -319,7 +342,7 @@ def parse_action_chunk(raw_output: str, horizon: int) -> ActionChunk:
                 "Skipping invalid action {} ({}): {}", i, type(exc).__name__, exc
             )
     if not parsed:
-        raise ValueError(
+        raise ActionParseError(
             f"All {len(raw_actions)} actions in chunk failed validation (or list was empty)"
         )
     return ActionChunk(actions=parsed, horizon=horizon)

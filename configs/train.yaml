@@ -75,6 +75,11 @@ inference:
   temperature: 1.0
   top_p: 1.0
   repetition_penalty: 1.0
+  # If the parser drops every action in a chunk this many times consecutively,
+  # stop inference with a "parse-failure budget exhausted" log (Phase 5.4.1).
+  # Distinguishes infiltration-driven rejection from a model-emitted terminal
+  # noop chunk, so a parse fail at step 0 no longer masquerades as "done."
+  max_consecutive_parse_failures: 3
 
 rl:
   enabled: true

@@ -5,6 +5,7 @@ import unittest
 from elysium.model.action_io import (
     apply_action_chat_template,
     extract_action_json,
+    ActionParseError,
     parse_action_chunk,
     split_prompt_completion_texts,
     strip_redacted_thinking_lead,
@@ -105,6 +106,24 @@ class TestParseActionChunk(unittest.TestCase):
 
     def test_empty_actions_list_raises(self) -> None:
         with self.assertRaises(ValueError):
+            parse_action_chunk('{"actions":[]}', 5)
+
+    def test_all_invalid_actions_raises_typed_error(self) -> None:
+        # Phase 5.4.1: the all-fail raise is now ActionParseError so the
+        # inference loop can distinguish it from a model-emitted terminal
+        # noop chunk (which previously triggered false-termination via the
+        # noop_chunk fallback). Subclass of ValueError for back-compat with
+        # callers that still catch ValueError.
+        bad = (
+            '{"action_type":"brush","color_rgba":[0,0,0,255],"stroke_size":5,'
+            '"hardness":100,"start_point":[10,"bad"],"end_point":[20,20]}'
+        )
+        raw = '{"actions":[' + bad + "," + bad + "]}"
+        with self.assertRaises(ActionParseError) as cm:
+            parse_action_chunk(raw, 5)
+        self.assertIsInstance(cm.exception, ValueError)
+
+        with self.assertRaises(ActionParseError):
             parse_action_chunk('{"actions":[]}', 5)
 
     def test_drops_action_with_sentinel_infiltration_in_scalar(self) -> None:
