@@ -503,7 +503,7 @@ GB10 (RL retry). No new code beyond a single-line reward edit.
   - Commit as `chore(data): regenerate processed dataset after May 16
     annotations`.
 
-- [ ] **5.3.2 Re-run SFT on the bigger dataset**
+- [x] **5.3.2 Re-run SFT on the bigger dataset**
   - `python scripts/train.py --epochs 12 --skip-prepare` from GB10
     (same hyperparams as Phase 3 — this experiment isolates dataset
     size, not config).
@@ -522,8 +522,22 @@ GB10 (RL retry). No new code beyond a single-line reward edit.
     epoch under-weights the Phase-3 instructions. Mitigation =
     per-instruction sampling weights in
     `elysium.data.format.build_dataset`, not more epochs.
+  - **Done 2026-05-16. Ran a 24-epoch budget; early-stop (patience=2)
+    fired after epoch 7, restored epoch-5 best as
+    `models/checkpoints/final/`.** Wallclock 88 min, 224 steps.
+    Eval trajectory: 0.503 → 0.329 → 0.287 → 0.262 → **0.254** → 0.266
+    → 0.273; token-acc topped at 0.956 while loss rose — textbook
+    overconfidence/overfit, early-stop caught the right point.
+    Numeric gate **fails** (0.254 > Phase 3's 0.182, 0.952 < 0.965).
+    The comparison isn't strictly fair — the val set itself grew
+    (55 → 127 records) with harder new-instruction tail (warp/clone/
+    text/fill) — but the gap is still load-bearing for qualitative
+    triage. Qualitative gate evaluated under 5.4 (see below); also
+    **fails** but for two separate reasons (inference plumbing bug +
+    persistent infiltration), neither of which is the per-instruction
+    skew the failure-mode hint anticipated.
 
-- [ ] **5.3.3 Gate: RL retry, yes or no?**
+- [x] **5.3.3 Gate: RL retry, yes or no?**
   - **STOP** if 5.3.2 SFT alone produces clean termination + plausible
     edits on the §5.1 comparison set AND on the new-instruction
     probes. New SFT becomes the deployed model. Phase 5.3 ends here.
@@ -532,6 +546,13 @@ GB10 (RL retry). No new code beyond a single-line reward edit.
     GT-terminal frames, or under-explores on a class of strokes the
     SFT teacher rarely produced.
   - Document the go/no-go inline in this checklist.
+  - **Decision 2026-05-16: NEITHER. Deferred to Phase 5.4.** The
+    qualitative diagnosis from §5.4.2 has to land before this gate
+    means anything — until we fix the plumbing bug that confounds
+    parse-failure with terminal, we cannot tell whether the residual
+    gap is reward-shape-shaped (which would justify 5.3.4) or
+    data/decoder-shaped (which 5.3.4 wouldn't address). 5.3.4 stays
+    available as an option after Phase 5.4 completes.
 
 - [ ] **5.3.4 (Optional) Drop `+0.05` format bonus, re-run RL**
   - Single-line edit in `src/elysium/model/rl_train.py` around the
@@ -563,6 +584,115 @@ GB10 (RL retry). No new code beyond a single-line reward edit.
     cleanly but needs nontrivial trainer surgery).
   - Phase 6 (action expert lite).
   - Phase 7 (learned critic).
+
+---
+
+## Phase 5.4 — Fix inference plumbing and diagnose §5.3.2 residuals
+
+The §5.3.2 SFT trained on the bigger dataset (eval_loss 0.254, early-stop
+restored epoch 5) **failed the qualitative gate** on the 8-prompt sweep run
+2026-05-16 (`outputs/comparison_v2/`, log
+`sweep_v2_20260516_144518.log`):
+
+| Prompt | Chunks | Phase-3 | Outcome |
+|---|---|---|---|
+| doggy | 0 | 17 | parse-fail at chunk 0 → noop fallback → false terminal |
+| girl_with_mole | 42 | 175 | brown spot drawn in *wrong location*; mole still visible |
+| mecedes | 87 | 20 | heavy blur applied; over-drew 4× longer than Phase-3 |
+| jolie | 0 | 25 | **real** noop terminal emitted on step 0 (regression) |
+| fishing | 1 | 1 | B&W ✓ (then parse-fail terminated the rest) |
+| honda_nsx_text | 4 | n/a | wrote "hohohonda" in orange script — attempted, garbled |
+| cyan_clouds | 14 | n/a | filled cyan ✓; no clouds drawn |
+| strawberry_heart | 0 | n/a | parse-fail at chunk 0 → false terminal |
+
+Two distinct issues, **only the first is unambiguously fixable inside Phase 5**:
+
+**(I) Inference plumbing — `predict.py` conflates parse-failure with terminal.**
+`_predict_chunk` catches the `ValueError` raised when *all* generated actions
+fail validation (the §5.2c hardening's intended behavior on infiltrated chunks),
+returns `noop_chunk(horizon)`, then the outer loop checks `is_terminal` and
+breaks. Three of the 8 prompts (doggy, fishing, strawberry_heart) die this way —
+we cannot tell the model's real capability on those prompts until this is fixed.
+
+**(II) Persistent sentinel infiltration in scalar fields.** 12 of 156 raw
+outputs (~8%) had `"size":<sentinel>`-style infiltration — the same failure
+mode §5.1 diagnosed and §5.2c hardened the *parser* against. The parser
+correctly drops infiltrated actions, but the *model* still emits them at the
+same rate because the training signal never punished them (size/strength/
+hardness are plain digit tokens in training data; the coord-sentinel
+distribution bleeds into adjacent scalar slots at decode time).
+
+Budget: (5.4.1+2) <1 h, no GPU. (5.4.3) ~4 h + 1.5 h GB10 train.
+(5.4.4) ~30 min + 1.5 h GB10 train.
+
+- [ ] **5.4.1 Fix `predict.py` false-termination on parse failure**
+  - Introduce `ActionParseError(ValueError)` in
+    `src/elysium/model/action_io.py`; have `parse_action_chunk` raise it
+    instead of plain `ValueError` when every action fails. Subclassing keeps
+    the existing `with assertRaises(ValueError)` tests green.
+  - In `src/elysium/model/predict.py`:
+    - Remove the `try/except` wrapper in `_predict_chunk` so the exception
+      propagates.
+    - In `run()`, catch `ActionParseError`: log, increment
+      `consecutive_parse_failures`, **skip canvas update + history append +
+      executed_chunks append**, then `continue`. Reset the counter on any
+      successful parse. If the counter reaches a configurable cap
+      (`inference.max_consecutive_parse_failures`, default 3), break the
+      loop with an explicit `"parse-failure budget exhausted"` log —
+      distinct from terminal noop.
+  - Acceptance: existing `test_all_invalid_actions_raises` still passes
+    (back-compat via `ActionParseError` ⊂ `ValueError`); new test asserts
+    `isinstance(ActionParseError(...), ValueError) is True`. Whole suite
+    green.
+
+- [ ] **5.4.2 Re-run the 8-prompt sweep on §5.3.2 SFT with 5.4.1 applied**
+  - Re-use `/tmp/run_sweep_v2.py`, output to `outputs/comparison_v2_fixed/`.
+  - Acceptance: every prompt terminates by one of {real-terminal-noop,
+    `max_chunks=200`, parse-failure-budget exhausted}; no silent disguised
+    terminals. Then re-judge §5.3.2 against §5.1 baselines with the
+    confound removed.
+  - Branch to one of three next steps:
+    - **Pass qualitatively** on ≥ 6/8 prompts → mark §5.3.2 acceptance met,
+      §5.3.3 = STOP, §5.4 ends here.
+    - **Infiltration dominates** (>20% of generations dropped after fix
+      → many "skip" iterations chew the step budget) → proceed to 5.4.3.
+    - **Real-terminal regressions** persist on multiple prompts
+      (jolie-style instant noop) → proceed to 5.4.4.
+    - Both → 5.4.3 first (cheaper signal-to-noise improvement), then 5.4.4.
+
+- [ ] **5.4.3 (Conditional) Close Phase-1's "leave scalars as text" deferral**
+  - Only if 5.4.2 shows infiltration still dominates the step budget.
+  - Extend coord-token binning to the `size` field (the only infiltrated
+    scalar in the observed sweep). Reuse the existing `<x*>` namespace
+    binding under a documented serializer mapping, OR add `<s1>..<s50>`
+    sentinels — pick whichever keeps `coord_tokens.add_coord_tokens` /
+    `resolve_tokens` simpler.
+  - Update `_emit_value` in `src/elysium/schemas/actions.py` to emit the
+    sentinel for `size` and `parse_action` to accept it. Initialize new
+    embeddings as `mean(tokenizer.encode(str(N)))` per Phase 1.6.
+  - Regenerate `data/processed/`, re-run SFT for 12 epochs (early-stop
+    catches the right epoch).
+  - Acceptance: `"size":<` infiltration rate in a fresh 8-prompt sweep
+    drops to ≤ 1/200 generations (vs current 12/156 ≈ 7.7%).
+
+- [ ] **5.4.4 (Conditional) Per-instruction sample weighting**
+  - Only if 5.4.2 shows persistent real-noop regressions on prompts like
+    jolie / strawberry_heart — i.e. the new short-task annotations
+    (single-stroke `stain`, `red_stickman`) shifting the noop-emission
+    prior earlier across the board.
+  - Add `data.instruction_weights: {name: float}` to `configs/train.yaml`
+    and thread through `elysium.data.format.build_dataset` — sample chunks
+    with weighted iteration (simplest: duplicate-by-int(weight*K) records
+    when constructing the HF dataset).
+  - Initial weights: down-weight single-stroke sessions to 0.5; keep
+    everything else at 1.0. Tune from sweep results.
+  - Acceptance: re-trained SFT executes ≥ 5 chunks on jolie and
+    strawberry_heart (no instant give-up) without regressing the prompts
+    that already work.
+
+- **Out of scope for 5.4:**
+  - RL retry (still §5.3.4; conditional on 5.4 stabilizing the SFT).
+  - Multi-step / episodic rollout reward.
 
 ---
 
