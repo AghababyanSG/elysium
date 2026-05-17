@@ -40,25 +40,28 @@ def _relative_path(path: str | Path) -> str:
     return os.path.relpath(path, Path.cwd())
 
 
-def _load_instructions(instructions_path: Path) -> dict[str, str]:
-    """Return mapping of session_name -> instruction string.
+def _load_instructions(
+    instructions_path: Path,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ``(session -> instruction_text, session -> task_name)``.
 
-    Args:
-        instructions_path: Path to configs/instructions.yaml.
-
-    Returns:
-        Dict of {session_name: instruction}.
+    Two parallel maps because we need the *task_name* (yaml key like
+    ``jolie_sad``) to look up per-instruction weights from config, but the
+    *instruction_text* to render into the user message. One pass over the
+    yaml builds both.
     """
     with instructions_path.open() as f:
         config = yaml.safe_load(f)
 
     session_to_instruction: dict[str, str] = {}
-    for task_info in config.get("tasks", {}).values():
+    session_to_task_name: dict[str, str] = {}
+    for task_name, task_info in config.get("tasks", {}).items():
         instruction = task_info["instruction"]
         for session in task_info.get("sessions", []):
             session_to_instruction[session] = instruction
+            session_to_task_name[session] = task_name
 
-    return session_to_instruction
+    return session_to_instruction, session_to_task_name
 
 
 def _load_chunks(chunks_dir: Path) -> dict[str, list[dict[str, Any]]]:
@@ -155,6 +158,8 @@ def build_dataset(
     train_split: float = 0.8,
     seed: int = 42,
     history_length: int = 0,
+    instruction_weights: dict[str, float] | None = None,
+    weight_scale: int = 4,
 ) -> None:
     """Build and save a HuggingFace Dataset from chunks and instructions.
 
@@ -164,14 +169,24 @@ def build_dataset(
         output_dir: Directory to save the HuggingFace dataset.
         train_split: Fraction of data to use for training.
         seed: Random seed for reproducible splits.
+        history_length: Number of past chunks to inject as text history.
+        instruction_weights: Optional ``{task_name: weight}`` map. Each
+            session's records are replicated ``int(weight * weight_scale)``
+            times before the train/val split, so a weight of 2.0 means
+            ~2× the sampling frequency of weight 1.0. Defaults to 1.0
+            for any task not listed. Phase 5.5.2.
+        weight_scale: Integer multiplier so fractional weights like 0.5 / 1.5
+            map cleanly (0.5 * 4 = 2 copies, 1.5 * 4 = 6, 1.0 * 4 = 4).
+            Default 4. Set to 1 for whole-number weights only.
     """
     try:
         from datasets import Dataset, DatasetDict
     except ImportError as e:
         raise ImportError("Install `datasets` to use this module: pip install datasets") from e
 
-    session_to_instruction = _load_instructions(instructions_path)
+    session_to_instruction, session_to_task_name = _load_instructions(instructions_path)
     sessions = _load_chunks(chunks_dir)
+    weights = dict(instruction_weights or {})
 
     if not sessions:
         raise ValueError(f"No chunks found in {chunks_dir}. Run prepare_data.py first.")
@@ -219,16 +234,64 @@ def build_dataset(
     if skipped:
         logger.warning("Skipped %d chunks from sessions with no instruction mapping", skipped)
 
-    # Chunk-level split: shuffle all chunks across sessions so val measures
-    # whether the model is fitting the seen instructions, not generalising to
-    # entirely held-out tasks (we have ~one session per task — too few to hold
-    # whole sessions out meaningfully).
-    all_records = [r for recs in session_records.values() for r in recs]
+    # Phase 5.5.2: replicate per-session records by int(weight * weight_scale)
+    # so train/val both see the rebalanced distribution. Default weight 1.0
+    # gives `weight_scale` copies — that's a no-op on relative frequencies
+    # but bloats the dataset size; safest to use weight_scale=1 when no
+    # explicit weights are configured, weight_scale=4 only when fractional
+    # weights are present (need the multiplier headroom).
+    has_explicit = bool(weights)
+    effective_scale = weight_scale if has_explicit else 1
+    weighted_counts: dict[str, int] = {}
+    for session_name, recs in session_records.items():
+        task_name = session_to_task_name.get(session_name, "")
+        w = float(weights.get(task_name, 1.0))
+        copies = max(0, int(round(w * effective_scale)))
+        weighted_counts[task_name] = weighted_counts.get(task_name, 0) + copies * len(recs)
+        if copies != effective_scale:
+            logger.info(
+                "Weighting: session %s (task=%s) weight=%.2f -> %d copies/record",
+                session_name, task_name, w, copies,
+            )
+    if has_explicit:
+        logger.info(
+            "Per-task weighted record counts: %s",
+            ", ".join(f"{k}={v}" for k, v in sorted(weighted_counts.items())),
+        )
+
+    # Split BEFORE replicating, so a duplicated record can't land in both
+    # train and val (that would be the leak that made the §5.5.2 first run's
+    # eval_loss measure memorization, not generalisation). Chunks from the
+    # same session can still split across train/val — the same property the
+    # pre-§5.5.2 chunk-level split had — but identical records never do.
+    base_records = [r for recs in session_records.values() for r in recs]
     random.seed(seed)
-    random.shuffle(all_records)
-    split_n = max(1, int(len(all_records) * train_split))
-    train_records = all_records[:split_n]
-    val_records = all_records[split_n:]
+    random.shuffle(base_records)
+    split_n = max(1, int(len(base_records) * train_split))
+    train_base = base_records[:split_n]
+    val_base = base_records[split_n:]
+
+    # Build instruction-text -> task-name reverse map for replication lookup
+    # (records carry only the rendered instruction text, not the task name).
+    _instruction_to_task: dict[str, str] = {
+        session_to_instruction[s]: session_to_task_name[s]
+        for s in session_to_instruction
+    }
+
+    def _replicate(split_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for rec in split_records:
+            text = rec["messages"][1]["content"][1]["text"]
+            inst = text.split("Instruction: ")[-1] if "Instruction:" in text else text
+            task = _instruction_to_task.get(inst, "")
+            copies = max(0, int(round(float(weights.get(task, 1.0)) * effective_scale)))
+            out.extend([rec] * copies)
+        return out
+
+    train_records = _replicate(train_base)
+    val_records = _replicate(val_base)
+    random.shuffle(train_records)
+    random.shuffle(val_records)
 
     dataset = DatasetDict({
         "train": Dataset.from_list(train_records),

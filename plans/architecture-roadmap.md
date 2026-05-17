@@ -406,6 +406,13 @@ Hard gate. Do not proceed to Phase 6 until Phases 1–4 are measured.
   - If a clear residual gap remains AND you have a plan to scale the
     dataset past ~10K chunks / ~50 instructions: proceed to Phase 6.
   - Acceptance: explicit go/no-go documented in this file.
+  - **Re-scope 2026-05-16:** Project end-goal updated to GT-free visual
+    rewarding (formerly Phase 7 "optional"). Phase 7 is now the
+    deliverable, not deferred. Phase 6 remains NO-GO (rationale below
+    still holds — sentinel infiltration is only 1.4% post-§5.4.1;
+    Phase 6 doesn't directly serve the GT-free goal; budget is better
+    spent on §5.5 / §5.6 / §7). All other §5.2 rationale unchanged. See
+    Phase 5.5, 5.6, 7 (rewritten), 8 (new) for the updated path.
   - **Decision: NO-GO on Phase 6 and Phase 7. Roll back the deployed
     checkpoint to Phase-3 SFT (`models/checkpoints/final`).**
     Rationale:
@@ -554,7 +561,7 @@ GB10 (RL retry). No new code beyond a single-line reward edit.
     data/decoder-shaped (which 5.3.4 wouldn't address). 5.3.4 stays
     available as an option after Phase 5.4 completes.
 
-- [ ] **5.3.4 (Optional) Drop `+0.05` format bonus, re-run RL**
+- [ ] **5.3.4 (Optional) Drop `+0.05` format bonus, re-run RL** — **Moved to §5.6 under the 2026-05-16 re-scope (Phase 7 elevated to end-goal). The content below is preserved as historical breadcrumb; do not act on it in place — see §5.6 for the live version.**
   - Single-line edit in `src/elysium/model/rl_train.py` around the
     Phase-4.2 block:
     ```python
@@ -625,7 +632,7 @@ distribution bleeds into adjacent scalar slots at decode time).
 Budget: (5.4.1+2) <1 h, no GPU. (5.4.3) ~4 h + 1.5 h GB10 train.
 (5.4.4) ~30 min + 1.5 h GB10 train.
 
-- [ ] **5.4.1 Fix `predict.py` false-termination on parse failure**
+- [x] **5.4.1 Fix `predict.py` false-termination on parse failure**
   - Introduce `ActionParseError(ValueError)` in
     `src/elysium/model/action_io.py`; have `parse_action_chunk` raise it
     instead of plain `ValueError` when every action fails. Subclassing keeps
@@ -644,59 +651,218 @@ Budget: (5.4.1+2) <1 h, no GPU. (5.4.3) ~4 h + 1.5 h GB10 train.
     (back-compat via `ActionParseError` ⊂ `ValueError`); new test asserts
     `isinstance(ActionParseError(...), ValueError) is True`. Whole suite
     green.
+  - **Done 2026-05-16.** Implementation extended slightly during 5.4.2:
+    after the first re-sweep crashed on strawberry_heart with a plain
+    `ValueError` from `_first_balanced_json_object` returning None
+    (256-token unbalanced array), all three `parse_action_chunk` raise
+    sites (no-balanced-JSON, missing-actions-key, json.loads decode) now
+    raise `ActionParseError` for symmetric handling in the loop. 38/38
+    tests green.
 
-- [ ] **5.4.2 Re-run the 8-prompt sweep on §5.3.2 SFT with 5.4.1 applied**
+- [x] **5.4.2 Re-run the 8-prompt sweep on §5.3.2 SFT with 5.4.1 applied**
   - Re-use `/tmp/run_sweep_v2.py`, output to `outputs/comparison_v2_fixed/`.
   - Acceptance: every prompt terminates by one of {real-terminal-noop,
     `max_chunks=200`, parse-failure-budget exhausted}; no silent disguised
     terminals. Then re-judge §5.3.2 against §5.1 baselines with the
     confound removed.
-  - Branch to one of three next steps:
-    - **Pass qualitatively** on ≥ 6/8 prompts → mark §5.3.2 acceptance met,
-      §5.3.3 = STOP, §5.4 ends here.
-    - **Infiltration dominates** (>20% of generations dropped after fix
-      → many "skip" iterations chew the step budget) → proceed to 5.4.3.
-    - **Real-terminal regressions** persist on multiple prompts
-      (jolie-style instant noop) → proceed to 5.4.4.
-    - Both → 5.4.3 first (cheaper signal-to-noise improvement), then 5.4.4.
+  - **Done 2026-05-16.** Two re-sweeps at T=1.0 / max=200 confirm the
+    fix: every prompt exits with a labelled reason, no false terminals.
+    But the real model behavior post-confound is **destructive
+    over-drawing on the hard prompts** (doggy 170 ch, girl_with_mole hit
+    200, strawberry_heart 70 ch of warp damage), not the predicted
+    "give up early." Run-to-run variance is large (doggy: 0/109/170 across
+    three sweeps; same prompt+seed+canvas, T=1.0 sampling), so any
+    single-sweep judgement is noisy.
+  - Parse-skip rate (`"size":<...>` infiltration etc.) was only 7/490
+    (~1.4%) across the second sweep — well below the 20% threshold for
+    5.4.3, so 5.4.3 is **deferred indefinitely**.
+  - The predicted "noop-emission shifted earlier" failure for 5.4.4
+    didn't materialise either (jolie 7 ch, strawberry_heart 70 ch — not
+    instant give-up), so 5.4.4 as scoped is **also deferred**. See 5.4.5
+    below for what actually worked.
 
-- [ ] **5.4.3 (Conditional) Close Phase-1's "leave scalars as text" deferral**
-  - Only if 5.4.2 shows infiltration still dominates the step budget.
-  - Extend coord-token binning to the `size` field (the only infiltrated
-    scalar in the observed sweep). Reuse the existing `<x*>` namespace
-    binding under a documented serializer mapping, OR add `<s1>..<s50>`
-    sentinels — pick whichever keeps `coord_tokens.add_coord_tokens` /
-    `resolve_tokens` simpler.
-  - Update `_emit_value` in `src/elysium/schemas/actions.py` to emit the
-    sentinel for `size` and `parse_action` to accept it. Initialize new
-    embeddings as `mean(tokenizer.encode(str(N)))` per Phase 1.6.
-  - Regenerate `data/processed/`, re-run SFT for 12 epochs (early-stop
-    catches the right epoch).
-  - Acceptance: `"size":<` infiltration rate in a fresh 8-prompt sweep
-    drops to ≤ 1/200 generations (vs current 12/156 ≈ 7.7%).
+- [ ] **5.4.3 (Deferred — trigger condition didn't fire) Close Phase-1's
+      "leave scalars as text" deferral**
+  - Infiltration rate post-5.4.1 is ~1.4%, not the >20% trigger threshold.
+    Keep this on file as the right fix if a future run shows infiltration
+    eating significant step budget; otherwise leave alone.
 
-- [ ] **5.4.4 (Conditional) Per-instruction sample weighting**
-  - Only if 5.4.2 shows persistent real-noop regressions on prompts like
-    jolie / strawberry_heart — i.e. the new short-task annotations
-    (single-stroke `stain`, `red_stickman`) shifting the noop-emission
-    prior earlier across the board.
-  - Add `data.instruction_weights: {name: float}` to `configs/train.yaml`
-    and thread through `elysium.data.format.build_dataset` — sample chunks
-    with weighted iteration (simplest: duplicate-by-int(weight*K) records
-    when constructing the HF dataset).
-  - Initial weights: down-weight single-stroke sessions to 0.5; keep
-    everything else at 1.0. Tune from sweep results.
-  - Acceptance: re-trained SFT executes ≥ 5 chunks on jolie and
-    strawberry_heart (no instant give-up) without regressing the prompts
-    that already work.
+- [ ] **5.4.4 (Deferred — diagnosis didn't match) Per-instruction sample weighting** — **Moved to §5.5.2 under the 2026-05-16 re-scope.** Diagnosis was right that giving-up didn't manifest, but the §5.4.5 sweep then surfaced over-edit / localization failures that *are* plausibly distribution-skew, so the intervention is alive again under a different trigger. See §5.5.2 for the live version.
+  - 5.4.2 showed the regressions are over-draw / wrong-location, not
+    instant give-up. Per-instruction weighting addresses the wrong
+    failure mode here. Re-evaluate only if a future training run shows
+    short-task annotations dominating the noop prior.
+
+- [x] **5.4.5 Inference-time temperature + cap retuning (the win)**
+  - Hypothesis (added inline during Phase 5.4): the over-draw + visual
+    incoherence pattern at T=1.0 is a low-confidence sampling effect.
+    Lower T should sharpen per-step quality.
+  - **Done 2026-05-16.** Ran two follow-up sweeps:
+    1. T=0.5 / max=200 — per-step edit quality jumped dramatically
+       (doggy near-clean removal, girl_with_mole targeted clone-stamping)
+       but **termination collapsed** (3/3 first prompts hit max=200).
+       The noop probability mass at T=1.0 was the only thing letting the
+       model stop. Squashing it at T=0.5 made the model loop forever on
+       its argmax draw action.
+    2. T=0.5 / max=30 — the compromise. Forces termination before damage
+       accumulates and uses the better per-step quality.
+  - Result on the 8-prompt set (T=0.5 / max=30 vs best of two T=1.0 /
+    max=200 sweeps):
+      | Prompt          | verdict   | note |
+      |-----------------|-----------|------|
+      | doggy           | **win**   | dog visibly removed, ground filled coherently |
+      | girl_with_mole  | **win**   | mole partially clone-stamped over, no spurious spots |
+      | fishing         | **win**   | clean B&W (vs no edit at T=1.0) |
+      | honda_nsx_text  | minor win | "honda" 2× clean (vs 4× garbled at T=1.0) |
+      | cyan_clouds     | tie       | filled cyan; clouds still absent |
+      | strawberry_heart| tie       | declined to warp (vs destroyed at T=1.0 — "do nothing" is better than the smear) |
+      | mecedes         | loss      | over-blurred to red wash (T=1.0 kept plate-region only) |
+      | jolie           | loss      | drew on hair instead of mouth (T=1.0 was also wrong, different way) |
+    Net: 4 wins / 2 ties / 2 losses, with the losses on prompts
+    (single-targeted-warp, single-targeted-blur) that aren't fixable by
+    inference tuning regardless.
+  - **Action**: Flip `configs/train.yaml` `inference.temperature`
+    1.0 → 0.5 and `inference.max_chunks` 200 → 30. Both with explanatory
+    comments tying back to this section. This is the cheapest, no-retrain
+    improvement Phase 5 produced.
 
 - **Out of scope for 5.4:**
-  - RL retry (still §5.3.4; conditional on 5.4 stabilizing the SFT).
+  - RL retry (now §5.6 under the 2026-05-16 re-scope; was §5.3.4. The
+    +0.05 format-bonus removal alone won't fix the over-draw pattern
+    surface-tuning addressed, but the §5.5 calibration fixes change
+    the SFT starting point enough to make RL worth retrying).
   - Multi-step / episodic rollout reward.
+  - Targeted-warp quality (jolie smile, strawberry heart) — addressed
+    indirectly by §5.5.2 sample-weight retuning; if that doesn't move
+    the needle, the residual gap is genuinely data-density and waits
+    on a Phase-7 critic to provide reward signal on unseen warps.
+
+---
+
+## Phase 5.5 — SFT residuals (training-side calibration fixes)
+
+Picks up the residuals §5.4.5 deployment couldn't reach with inference
+tuning alone. Two training-side knobs, each independently testable,
+each ~1.5 h GB10 train.
+
+The §5.4 sweep evidence is concrete on what's broken:
+- **Termination calibration**: at T=0.5 the noop probability mass
+  collapses to ~zero (5/8 prompts hit max_chunks instead of emitting a
+  real terminal). The model has not learned to emit noop *confidently*.
+- **Spatial localization**: jolie smile drawn on hair, strawberry_heart
+  declined entirely, mecedes blur over-applied to whole canvas. These
+  three share the failure shape "model can't bind 'X edit' to 'region
+  of X'." Likely cause: the new May-16 sessions skew the uniform-
+  sampling distribution against the prompts that need precision.
+
+5.5 fixes both before §5.6 retries RL on top.
+
+- [ ] **5.5.1 Loss reweight for noop tokens**
+  - Hypothesis: noop tokens are rare in training data (only at session
+    ends), so SFT cross-entropy never strongly rewards confident noop
+    emission. T=1.0 sampling masked this by accidentally landing on
+    noop occasionally; T=0.5 squashes that escape valve and the
+    miscalibration becomes load-bearing.
+  - Implementation surface: `src/elysium/model/train.py:175`
+    `_HFActionVisionDataCollator` already masks loss to assistant
+    tokens. Extend it to multiply per-position loss weight by
+    `noop_loss_weight` (~3.0) when the target token belongs to a
+    `"action_type":"noop"` sub-sequence in the rendered assistant text.
+    Mirror the change in the Unsloth path `_UnslothCollator` at
+    `train.py:121`.
+  - Config: add `training.noop_loss_weight: 3.0` to
+    `configs/train.yaml` (default 1.0 = current behavior).
+  - Cost: ~50 lines code + 1.5 h GB10 train.
+  - Acceptance: at T=0.5 / `max_chunks` temporarily lifted to 200 on
+    the §5.4.2 8-prompt sweep, **real terminal noops fire on ≥ 5/8
+    prompts** (vs current 3/8 — fishing, honda_nsx_text plus one of
+    the over-draw failures). No regression vs T=1.0 / max=200 on edit
+    quality (judged by side-by-side image read).
+
+- [ ] **5.5.2 Per-instruction sample weighting** (revives deferred
+      §5.4.4; see breadcrumb there)
+  - Hypothesis: May-16 sessions added many single-stroke tasks
+    (`stain`, `red_stickman`) and warp-heavy tasks (jolie_sad,
+    brad_pitt_smile) that skew uniform sampling against the original
+    12 instructions and against the prompts that need region precision.
+  - Implementation surface: `src/elysium/data/format.py` `build_dataset`.
+    Add `data.instruction_weights: {name: float}` to
+    `configs/train.yaml`; in `build_dataset`, scale per-session chunk
+    duplication by `int(weight * scale)` before HuggingFace
+    `Dataset.from_list`. Pattern mirrors the existing
+    `data.history_length` threading.
+  - Initial weights: 0.5 for single-stroke (`stain`, `red_stickman`),
+    1.5 for targeted-warp (`brad_pitt_smile`, `jolie_sad`,
+    `jaap_stam_smile`, `strawberry_heart`), 1.0 everything else.
+  - Cost: ~30 lines code + 1.5 h GB10 train.
+  - Acceptance: jolie executes a recognizable mouth-region warp (not
+    hair); strawberry_heart actually attempts a warp (not declines).
+    Targeted-warp accuracy ≥ 1/3 on the §5.4.2 prompt set. No
+    regression on the prompts that already worked (fishing,
+    honda_nsx_text, doggy clone-removal).
+
+- **Out of scope for 5.5:**
+  - Vision-grounded prompts (mask/bbox conditioning) — needs a
+    fundamentally different prompt format; deferred until Phase 7
+    evidence says localization is still the bottleneck after weighting.
+  - More annotation data (the §5.2.b lever is already fully spent
+    pre-§5.3; the next round of annotations is the user's call, not
+    a §5.5 sub-item).
+
+---
+
+## Phase 5.6 — Clean RL retry on the §5.5 SFT
+
+Picks up the moved §5.3.4 with §5.5 as the warm-start. Gates Phase 7.
+
+- [ ] **5.6.1 Drop the +0.05 format-valid bonus**
+  - Delete (or gate-false) the two-line block at
+    `src/elysium/model/rl_train.py:292-293`:
+    ```python
+    if not pred_chunk.is_terminal:
+        r = float(np.clip(r + 0.05, -1.0, 1.0))
+    ```
+    The §5.1 diagnosis is still the leading hypothesis: this bonus
+    teaches the policy that non-terminal strictly dominates terminal
+    in expected reward, which the GRPO update then locks in.
+  - Parse-valid completions still beat parse-invalid because parse-
+    invalid short-circuits to flat `-1.0` at the top of
+    `_make_reward_fn`; we're only removing the asymmetric pull
+    *toward* non-terminal.
+
+- [ ] **5.6.2 Run RL on the §5.5 SFT**
+  - `python scripts/train.py --rl --skip-prepare` on the §5.5
+    checkpoint. Reuse all other Phase-4 settings (SSIM-on-bbox reward,
+    GRPO, 400 steps, the three TRL Qwen3.5-VL bridge patches from §1.9).
+  - Cost: ~2 h GB10 train.
+  - Acceptance: on the §5.1 / §5.4.2 8-prompt sweep (T=0.5 /
+    max_chunks=30 deployed config):
+    - Termination ≥ §5.5 SFT (≤ 30 chunks before terminal noop on
+      ≥ 5/8 prompts).
+    - Visual quality ≥ §5.5 SFT (no side-by-side regression on
+      doggy, girl_with_mole, fishing, honda_nsx_text, cyan_clouds).
+  - If pass: deploy as `models/checkpoints/rl_final/` (overwriting the
+    unused Phase-4 adapter); flip `scripts/infer.py` default checkpoint
+    if helpful.
+  - If fail: roll back to the §5.5 SFT; document why bonus-removal
+    alone wasn't enough. Most likely answer: needs the GT-free critic
+    as auxiliary reward — exactly what Phase 7 addresses.
+
+- **§5.6 is the gate for Phase 7.** Phase 7's critic-as-auxiliary-
+  reward only makes sense if base RL with SSIM-only works at all. If
+  §5.6 fails outright, re-examine §5.5 calibration before doing the
+  critic work.
 
 ---
 
 ## Phase 6 — Optional: "Action expert lite" (two-head decoupling)
+
+**Re-evaluated 2026-05-16 under the new Phase 7 end-goal: still NO-GO.**
+Phase 7 doesn't require typed parameter heads; sentinel infiltration is
+1.4% post-§5.4.1 (well below the threshold that would justify the
+1–2 week lift); budget better spent on §5.5–§7. Kept in the document
+as the right answer if a future scale-up makes typed param heads
+worthwhile, but not on the current critical path.
 
 Only do this after Phase 5 says go. Replaces text-encoded action params
 with a typed parameter head per action class.
@@ -726,27 +892,156 @@ Budget: 1–2 weeks of engineering. Significant risk.
 
 ---
 
-## Phase 7 — Optional: Learned drawing critic / GT-free reward
+## Phase 7 — GT-free visual reward via SigLIP critic (project end-goal)
 
-Do this only if scaling to instructions with no GT.
+**Elevated 2026-05-16 from "optional" to the project's deliverable.**
+Phase 8 then runs RL with the critic as the *only* reward.
 
-Budget: ~1 day to prototype.
+Builds a learned drawing critic — `P(canvas is plausibly human-drawn
+for instruction X)` — from existing annotation data plus synthetic and
+harvested negatives, then wires it as an auxiliary reward on top of
+§5.6's SSIM signal. Once validated, Phase 8 drops SSIM entirely.
 
-- [ ] **7.1 Build positive/negative training set**
-  - Positives: every observation frame from the annotation sessions.
-  - Negatives: same frames noised, permuted, or replaced with model
-    failure-mode outputs.
+Budget: ~2–3 days code + ~3 h GPU total (critic is tiny; RL is the
+expensive part).
 
-- [ ] **7.2 Train SigLIP-MLP critic**
-  - Frozen SigLIP image encoder + 2-layer MLP head → P(canvas is plausibly
-    human-drawn for instruction X).
+- [ ] **7.1 Build critic training dataset**
+  - **Positives** (~300): observation frames (canvas state) at K~5
+    evenly-spaced timesteps per session, across all 61 JSONs in
+    `data/raw/sessions/`. Each record: `(canvas_PNG, instruction_text,
+    label=1)`.
+  - **Negatives** (~3000, 10:1 to positives), three modes ~1000 each:
+    1. **Mismatched**: pair each frame with a wrong instruction
+       sampled from the other 16 instruction strings.
+    2. **Noised**: gaussian noise (σ=0.05–0.15), random patches
+       (5–20% area, random colour), or stroke-permutation (re-order
+       session strokes randomly before re-rendering the canvas).
+    3. **Model-failure-harvested**: re-run the §5.4 sweeps with
+       multiple seeds (3-5 per prompt); pair each over-edited /
+       wrong-location output with its original instruction. These are
+       the highest-value negatives because they are the exact failure
+       modes we want the critic to penalise.
+  - Output: `data/processed_critic/` with HF `DatasetDict`
+    (`{train, validation}`, 80/20 split). Each record:
+    `{"image": PIL, "instruction": str, "label": int}`.
+  - New script: `scripts/prepare_critic_data.py`.
+  - Cost: ~150 lines code + ~30 min CPU.
+  - Acceptance: `len(d['train']) > 2000`; manual spot-check of 10
+    records per mode shows the labels are semantically correct.
 
-- [ ] **7.3 Wire as auxiliary RL reward**
-  - Additive bonus to `visual_reward`; weight small (start 0.1) so it does
-    not dominate the imitation signal.
-  - Acceptance: RL with auxiliary reward on a small held-out set of unseen
-    instructions produces non-trivial canvas changes (vs the noop baseline
-    that pure GT-conditioned reward would fall back to).
+- [ ] **7.2 Critic architecture**
+  - New module `src/elysium/model/critic.py`. Class
+    `DrawingCritic(nn.Module)`:
+    - Frozen SigLIP image encoder
+      (`google/siglip-base-patch16-224` via `transformers.AutoModel`).
+    - Frozen SigLIP text encoder (same checkpoint) — start with SigLIP
+      text since it's CLIP-trained and aligned with the image side.
+      Fallback: Qwen3.5-VL embedding for instruction text if SigLIP
+      text underperforms.
+    - Trainable head: concat image + text embeddings (~768 dims each
+      → ~1536) → Linear(in, 256) → GELU → Linear(256, 1) → sigmoid.
+    - ~400K–600K trainable params total; encoder weights frozen.
+  - Deps: SigLIP ships with `transformers>=5.5.0` (already pinned in
+    `requirements.txt`). Verify via smoke test; only add to
+    `requirements.txt` if the import fails.
+  - Cost: ~80 lines code, no GPU.
+  - Acceptance: smoke test — random-initialized critic on a sample
+    image+instruction returns a scalar in `[0, 1]` with no shape
+    errors; trainable param count matches expectation
+    (`model.print_trainable_parameters()`).
+
+- [ ] **7.3 Critic training script**
+  - New module `src/elysium/model/critic_train.py` mirroring the
+    structure of `src/elysium/model/train.py` but much simpler (no
+    LoRA, no VLM, no chat template).
+  - BCE loss, AdamW, lr=1e-4, batch=64, 5 epochs, fp16/bf16 mixed.
+  - Mixed-batch sampler keeps a 1:3 positive:negative ratio per batch
+    (avoids gradient bias from the global 1:10 dataset imbalance —
+    BCE on a 1:10 batch puts almost no signal on the positive class).
+  - Output: `models/critic/` (MLP head weights + frozen encoder ID
+    metadata so we can re-instantiate without ambiguity).
+  - New entrypoint: `scripts/train_critic.py`.
+  - Cost: ~150 lines code + ~30 min GPU (small model).
+  - Acceptance:
+    - Validation AUC ≥ 0.90 overall.
+    - Per-mode validation accuracy ≥ 0.85 on each of mismatched,
+      noised, and harvested negatives (i.e. the critic doesn't ace
+      one easy mode while failing the others).
+
+- [ ] **7.4 Integrate critic as auxiliary RL reward**
+  - Extend `src/elysium/model/reward.py`: add
+    `critic_reward(canvas: np.ndarray, instruction: str, critic:
+    DrawingCritic) -> float` returning `2 * P(plausible) - 1`
+    (rescales sigmoid to `[-1, 1]` to match `visual_reward` range).
+  - In `src/elysium/model/rl_train.py`: optionally load the critic at
+    trainer init; new combined reward
+    `visual_reward + critic_weight * critic_reward`. Config:
+    `rl.critic_weight: 0.1` to start (small so SSIM still dominates).
+  - Re-run RL on the §5.6 RL checkpoint as warm-start (so we measure
+    delta from a known-good baseline, not from §5.5 SFT cold-start).
+  - Cost: ~80 lines code + 2 h GB10 train.
+  - Acceptance: same termination + quality bar as §5.6 — adding the
+    critic must not regress trained-prompt behavior. **Stretch**: on a
+    held-out subset of the §5.4.2 8-prompt sweep, auxiliary-rewarded
+    model produces qualitatively cleaner edits than §5.6 base on at
+    least one of the residual-failure prompts (jolie, mecedes,
+    strawberry_heart).
+
+- [ ] **7.5 Validation on unseen instructions**
+  - Define a held-out prompt set of 5–10 instructions NOT in
+    `configs/instructions.yaml`. Concrete suggestions reusing existing
+    images:
+    - "remove the lamppost" (people_crossing_street.jpg)
+    - "make the sky purple" (sunset.jpg or fishing.jpg)
+    - "add sunglasses to the person" (jolie.jpg, brad_pitt.jpg)
+    - "draw a moon in the corner" (sunset_man_silhouette.jpg)
+    - "make the cat asleep" (cat_asphalt.jpg)
+    - "remove the headlights" (mecedes.jpg, honda-nsx-type-r.jpg)
+    - "add a beach umbrella" (ground_sky_clouds.jpg)
+    - "make the dog winking" (winking_dog.jpg → already winking; flip)
+  - Run inference with the §7.4 critic-auxiliary-RL adapter at the
+    deployed T=0.5 / max_chunks=30 config.
+  - Acceptance:
+    - Model produces non-trivial canvas changes (NOT noop, NOT
+      parse-failure-budget-exhausted) on ≥ 5/10 unseen prompts.
+    - Independent visual judgement: ≥ 3/10 produce a recognisable
+      attempt at the *right* edit (vs random damage).
+  - Save outputs to `outputs/unseen_v1/`.
+
+---
+
+## Phase 8 — GT-free RL (critic-only reward)
+
+The final form of the deliverable. Once §7.4 + §7.5 validate that the
+critic provides usable gradient signal, drop SSIM entirely.
+
+Budget: 1-line code change + ~2 h GB10 train.
+
+- [ ] **8.1 Run RL with `reward = critic_reward(canvas, instruction)`
+      only**
+  - Zero out the `visual_reward` weight in the combined reward
+    (`rl.visual_weight: 0.0`, `rl.critic_weight: 1.0`) — or rip the
+    SSIM call out entirely if config gating proves too fragile.
+  - Warm-start from §7.4 checkpoint.
+  - Acceptance:
+    - On the §7.5 held-out unseen-prompt set, ≥ 6/10 produce
+      recognisable attempts (vs §7.5's ≥ 3/10 with SSIM auxiliary).
+    - On the original §5.4.2 8-prompt training-set sweep, net
+      win/loss vs §7.4 no worse than `−1` (losing GT signal shouldn't
+      catastrophically hurt trained prompts).
+  - If pass: deliverable lives at `models/checkpoints/rl_gtfree/`.
+    Document the deployment switch in CLAUDE.md / README.
+  - If fail: investigate. Likely culprits — critic over-confident on
+    easy positives (revisit §7.1 negatives, especially harvested),
+    critic_weight ramp too aggressive (try schedule 0.1 → 1.0 over
+    training).
+
+- **Out of scope for Phase 8:**
+  - Online critic update (would create a moving-target reward).
+  - Multi-step / episodic rollout reward (would help termination but
+    requires nontrivial trainer surgery still NOT scoped).
+  - Critic ensembling (saved for if a single critic proves unreliable
+    in deployment).
 
 ---
 

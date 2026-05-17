@@ -247,7 +247,7 @@ def _build_grpo_dataset(
     )
 
 
-def _make_reward_fn(horizon: int) -> Any:
+def _make_reward_fn(horizon: int, format_bonus: float = 0.0) -> Any:
     def visual_reward_fn(
         completions: list[Any],
         image: list[Image.Image],
@@ -284,13 +284,15 @@ def _make_reward_fn(horizon: int) -> Any:
                 gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
                 gt_cache[gt_key] = gt_target
             r = visual_reward(predicted, gt_target, canvas_np)
-            # Phase 4.2: +0.05 additive bonus for non-terminal parse-valid
-            # completions, so a near-correct-but-wrong-colour stroke scores
-            # strictly above 0 — keeping that band distinguishable from the
-            # noop attractor (terminal completions stay at the visual_reward
-            # baseline, which is ≤ 0 for non-terminal GT rows).
-            if not pred_chunk.is_terminal:
-                r = float(np.clip(r + 0.05, -1.0, 1.0))
+            # Phase 4.2 added a +0.05 additive bonus for non-terminal
+            # parse-valid completions so a near-correct-but-wrong-colour
+            # stroke scored strictly above 0. §5.1 diagnosed this as the
+            # termination-breaker: non-terminal then strictly dominated
+            # terminal (whose reward is ≤ 0 for non-terminal GT rows) and
+            # the GRPO policy learned to never emit the all-noop terminator.
+            # §5.6 gates it behind `rl.format_bonus` (default 0.0 = off).
+            if format_bonus and not pred_chunk.is_terminal:
+                r = float(np.clip(r + format_bonus, -1.0, 1.0))
             rewards.append(r)
 
         return rewards
@@ -317,6 +319,11 @@ def run_rl_training(
     sft_checkpoint = checkpoint_dir or Path(data_cfg["checkpoint_dir"]) / "final"
     output_dir = Path(data_cfg["checkpoint_dir"]) / "rl_final"
     horizon: int = data_cfg["action_horizon"]
+    format_bonus = float(rl_cfg.get("format_bonus", 0.0))
+    logger.info(
+        "RL reward: visual_reward + format_bonus={} (Phase 5.6: 0.0 = §5.1 fix)",
+        format_bonus,
+    )
 
     tb_root = Path(cfg.get("training", {}).get("tensorboard_dir", "logs/tensorboard"))
     run_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -434,7 +441,7 @@ def run_rl_training(
         processing_class=processor,
         args=grpo_config,
         train_dataset=grpo_dataset,
-        reward_funcs=[_make_reward_fn(horizon)],
+        reward_funcs=[_make_reward_fn(horizon, format_bonus=format_bonus)],
         callbacks=[
             _AssertParamsFinite(),
             _DetectCollapse(noop_token_len=noop_token_len),

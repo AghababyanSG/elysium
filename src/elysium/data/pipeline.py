@@ -60,9 +60,12 @@ def run_pipeline(
     chunk_all(paths.compressed, paths.frames, paths.chunks, horizon=horizon, stride=stride)
 
     history_length = int(data_cfg.get("history_length", 0))
+    instruction_weights = data_cfg.get("instruction_weights") or {}
+    weight_scale = int(data_cfg.get("weight_scale", 4))
     logger.info(
-        "Step 3/3: Building dataset (train_split=%.2f, history_length=%d)",
-        train_split, history_length,
+        "Step 3/3: Building dataset (train_split=%.2f, history_length=%d, "
+        "instruction_weights=%d entries, scale=%d)",
+        train_split, history_length, len(instruction_weights), weight_scale,
     )
     build_dataset(
         paths.chunks,
@@ -71,6 +74,8 @@ def run_pipeline(
         horizon=horizon,
         train_split=train_split,
         history_length=history_length,
+        instruction_weights=instruction_weights,
+        weight_scale=weight_scale,
     )
 
     logger.info("Data pipeline complete.")

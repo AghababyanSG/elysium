@@ -42,6 +42,13 @@ training:
   dataloader_num_workers: 4
   dataloader_pin_memory: true
   tensorboard_dir: "logs/tensorboard"
+  # Phase 5.5.1: per-token loss weight applied to tokens inside any
+  # `{"action_type":"noop"}` action span. Noop actions are only ~2.2% of
+  # training actions (22 / 1010), so plain CE never strongly rewards
+  # confident noop emission and at inference T=0.5 the noop probability
+  # collapses (model never terminates). 1.0 = current behavior; 3.0 =
+  # the §5.5.1 experiment. HF path only — Unsloth path warns if != 1.0.
+  noop_loss_weight: 3.0
 
 data:
   action_horizon: 2
@@ -57,6 +64,30 @@ data:
   dataset_path: "data/processed"
   instructions: "configs/instructions.yaml"
   checkpoint_dir: "models/checkpoints"
+
+  # Phase 5.5.2: per-task chunk replication weights. Each session's records
+  # are duplicated int(weight * weight_scale) times before train/val split,
+  # so weight=1.5 ≈ 1.5× the per-epoch sampling frequency vs weight=1.0.
+  # Empty {} or omitted -> no weighting (weight=1.0 for all tasks, scale=1).
+  # Initial weights target the §5.5.1 over-draw failure modes:
+  #   - Up-weight targeted-warp tasks (jolie / strawberry / jaap_stam smile;
+  #     brad_pitt; jolie_sad) because the §5.5.1 sweep showed warp inference
+  #     still mostly draws on the wrong region — more exposure should help.
+  #   - Down-weight single-stroke tasks (stain, red_stickman) so they don't
+  #     dilute the gradient for the harder iterative tasks.
+  # scale=2 means weights {0.5, 1.0, 1.5} -> {1, 2, 3} copies; relative
+  # balance preserved with 2× dataset bloat (vs 4× at scale=4). Bump to
+  # 4 if finer weights (0.25 / 0.75) are needed.
+  weight_scale: 2
+  instruction_weights:
+    # targeted-warp (region-precise deformation) — boost
+    brad_pitt_smile: 1.5
+    jolie_sad: 1.5
+    jaap_stam_smile: 1.5
+    strawberry_heart: 1.5
+    # single-stroke quick tasks — dampen
+    stain: 0.5
+    red_stickman: 0.5
   raw:
     sessions: "data/raw/sessions"
     frames: "data/raw/frames"
@@ -65,14 +96,21 @@ data:
     chunks: "data/interim/chunks"
 
 inference:
-  max_chunks: 200
+  # Phase 5.4 deployed defaults — eight-prompt sweep at (T=0.5, max=30)
+  # produced 4 wins / 1 tie / 2 mild losses vs. (T=1.0, max=200) on the
+  # §5.1 / §5.4.2 evaluation set. Net gain: object-removal / B&W / text
+  # tasks now produce real edits; over-draw collapse on max-200 is gone.
+  # Targeted-warp prompts (jolie / strawberry_heart) still fail under
+  # either regime — that needs training-side work, not inference tuning.
+  max_chunks: 30
   ensemble_execute_k: 2
   max_new_tokens: 256
-  # Match the RL training generation distribution so the inference policy
-  # actually behaves like the rewarded policy. Greedy decoding on this small
-  # SFT dataset collapses to noop on step 0 → blank canvas.
   do_sample: true
-  temperature: 1.0
+  # T=1.0 leaked enough noop probability mass that the model would
+  # accidentally emit a terminal chunk after destroying the canvas with
+  # 100+ over-edits. T=0.5 sharpens per-step quality and the max_chunks=30
+  # cap forces termination before damage accumulates.
+  temperature: 0.5
   top_p: 1.0
   repetition_penalty: 1.0
   # If the parser drops every action in a chunk this many times consecutively,
@@ -118,3 +156,9 @@ rl:
   # on the same answer (reward_std=0, no gradient). Bumped from 50 to push the
   # training distribution onto the hard tail where RL can still extract signal.
   min_gt_pixels: 200
+  # Phase 5.6: was a hard-coded +0.05 in rl_train.py:292-293 (Phase 4.2). §5.1
+  # diagnosed it as the termination-breaker — non-terminal earned r + bonus,
+  # terminal stayed at 0, so GRPO learned to never emit the all-noop chunk
+  # at inference. 0.0 disables the bonus entirely (the §5.6 default); set to
+  # 0.05 to restore the Phase-4.2 behavior for ablation.
+  format_bonus: 0.0

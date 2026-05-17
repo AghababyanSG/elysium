@@ -44,6 +44,73 @@ def _load_config(config_path: Path) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+_NOOP_PATTERN = '{"action_type":"noop"}'
+
+
+def _noop_token_positions(
+    tokenizer: Any,
+    full_text: str,
+    prompt_text: str,
+    n_prompt: int,
+    full_seq_length: int,
+) -> list[int]:
+    """Absolute token positions inside any ``{"action_type":"noop"}`` span.
+
+    Phase 5.5.1: assistant tokens that fall inside a noop action serialization
+    get an upweighted loss. This helper finds those tokens.
+
+    Strategy: strip the prompt prefix from ``full_text`` to get the assistant
+    segment, tokenize it standalone with offset mapping, find noop substring
+    spans in the segment, mark tokens whose char offsets overlap any span,
+    map back to absolute positions by adding ``n_prompt``.
+
+    Returns an empty list (and logs a warning) if the standalone segment
+    tokenization length doesn't match ``full_seq_length - n_prompt`` — that
+    indicates the chat-template boundary merged tokens differently between
+    the standalone and concatenated tokenizations, and we'd rather skip
+    weighting for that example than mark the wrong positions.
+    """
+    if not full_text.startswith(prompt_text):
+        return []
+    segment = full_text[len(prompt_text):]
+    if _NOOP_PATTERN not in segment:
+        return []
+
+    encoding = tokenizer(
+        segment,
+        add_special_tokens=False,
+        return_offsets_mapping=True,
+    )
+    offsets = encoding["offset_mapping"]
+    seg_token_count = len(encoding["input_ids"])
+    expected = full_seq_length - n_prompt
+    if seg_token_count != expected:
+        logger.warning(
+            "noop weight: segment retokenize {} != trailing {} (skipping example)",
+            seg_token_count, expected,
+        )
+        return []
+
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        i = segment.find(_NOOP_PATTERN, start)
+        if i < 0:
+            break
+        spans.append((i, i + len(_NOOP_PATTERN)))
+        start = i + len(_NOOP_PATTERN)
+
+    positions: list[int] = []
+    for tok_idx, (a, b) in enumerate(offsets):
+        if a == b:  # special tokens have (0, 0) — skip
+            continue
+        for s, e in spans:
+            if a < e and b > s:
+                positions.append(n_prompt + tok_idx)
+                break
+    return positions
+
+
 def _strip_none_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # HF datasets unifies the arrow schema across all `content` items, so text
     # dicts end up with a stray `image: None` key (and image dicts with
@@ -162,6 +229,12 @@ def _build_unsloth_model_and_collator(
                 enable_thinking=False,
             )
 
+    if float(train_cfg.get("noop_loss_weight", 1.0)) != 1.0:
+        logger.warning(
+            "[unsloth] noop_loss_weight={} ignored — Phase 5.5.1 weighting is "
+            "only wired on the HF path (set use_unsloth=false to use it).",
+            train_cfg.get("noop_loss_weight"),
+        )
     collator = _UnslothCollator(
         model, tokenizer, max_seq_length=train_cfg["max_seq_length"]
     )
@@ -173,12 +246,24 @@ def _build_unsloth_model_and_collator(
 # ---------------------------------------------------------------------------
 
 class _HFActionVisionDataCollator:
-    """Plain HF/PEFT vision SFT collator masking loss to assistant tokens."""
+    """Plain HF/PEFT vision SFT collator masking loss to assistant tokens.
 
-    def __init__(self, processor: Any, max_seq_length: int) -> None:
+    With ``noop_loss_weight != 1.0`` (Phase 5.5.1), additionally attaches
+    a ``loss_weights`` tensor to the batch — 1.0 default, ``noop_loss_weight``
+    at tokens that fall inside any ``{"action_type":"noop"}`` action span.
+    ``_WeightedSFTTrainer`` consumes the tensor to upweight noop-token loss.
+    """
+
+    def __init__(
+        self,
+        processor: Any,
+        max_seq_length: int,
+        noop_loss_weight: float = 1.0,
+    ) -> None:
         self.processor = processor
         self.max_seq_length = max_seq_length
         self.tokenizer = getattr(processor, "tokenizer", processor)
+        self.noop_loss_weight = noop_loss_weight
         self._template_kwargs = {"enable_thinking": False}
 
     def _apply_template(
@@ -214,6 +299,11 @@ class _HFActionVisionDataCollator:
 
         labels = full_batch["input_ids"].clone()
         pad_id = self.tokenizer.pad_token_id
+        attn = full_batch.get("attention_mask")
+        weight = self.noop_loss_weight
+        loss_weights: torch.Tensor | None = None
+        if weight != 1.0:
+            loss_weights = torch.ones_like(labels, dtype=torch.float32)
 
         for i, prompt_text in enumerate(prompt_texts):
             prompt_inputs = self.processor(
@@ -227,9 +317,31 @@ class _HFActionVisionDataCollator:
             n_prompt = int(prompt_inputs["input_ids"].shape[1])
             labels[i, :n_prompt] = -100
 
+            if loss_weights is not None:
+                # `full_batch` is padded to the longest sequence in the batch
+                # — that's NOT this example's actual length. Subtracting
+                # n_prompt from the padded length would over-count by the
+                # pad token tail. Use attention_mask to get true content len.
+                if attn is not None:
+                    actual_full_len = int(attn[i].sum().item())
+                else:
+                    actual_full_len = int((labels[i] != pad_id).sum().item())
+                positions = _noop_token_positions(
+                    self.tokenizer,
+                    full_text=full_texts[i],
+                    prompt_text=prompt_text,
+                    n_prompt=n_prompt,
+                    full_seq_length=actual_full_len,
+                )
+                if positions:
+                    idx = torch.tensor(positions, dtype=torch.long)
+                    loss_weights[i].index_fill_(0, idx, weight)
+
         if pad_id is not None:
             labels[labels == pad_id] = -100
         full_batch["labels"] = labels
+        if loss_weights is not None:
+            full_batch["loss_weights"] = loss_weights
         return full_batch
 
 
@@ -253,6 +365,45 @@ def _freeze_vision_tower(model: Any) -> None:
             logger.info("[hf] Vision tower frozen ({} params)", n)
             return
     logger.warning("[hf] Vision tower not located; skipping freeze")
+
+
+class _WeightedSFTTrainer(SFTTrainer):
+    """SFTTrainer that consumes a per-token ``loss_weights`` tensor.
+
+    When the batch carries ``loss_weights`` (Phase 5.5.1 noop upweighting),
+    recompute the loss as a weighted mean of per-token cross-entropy over
+    non-masked (`label != -100`) positions. When absent, fall back to the
+    model's built-in loss.
+    """
+
+    def compute_loss(
+        self,
+        model: Any,
+        inputs: dict[str, Any],
+        return_outputs: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        loss_weights = inputs.pop("loss_weights", None)
+        outputs = model(**inputs)
+        if loss_weights is None:
+            return (outputs.loss, outputs) if return_outputs else outputs.loss
+
+        logits = outputs.logits
+        labels = inputs["labels"]
+        # Causal-LM shift: predict token t+1 from logits at t.
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        shift_weights = loss_weights[..., 1:].to(shift_logits.dtype).contiguous()
+
+        loss_fct = torch.nn.CrossEntropyLoss(reduction="none", ignore_index=-100)
+        per_token = loss_fct(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+        ).view(shift_labels.shape)
+        active = (shift_labels != -100).to(per_token.dtype)
+        weighted = per_token * shift_weights * active
+        loss = weighted.sum() / active.sum().clamp(min=1.0)
+        return (loss, outputs) if return_outputs else loss
 
 
 def _build_hf_model_and_collator(
@@ -288,8 +439,13 @@ def _build_hf_model_and_collator(
     # over plain decimal digits (greedy decode silently emits decimals).
     coord_ids = coord_token_ids(getattr(processor, "tokenizer", processor))
     model = apply_lora(model, lora_cfg, trainable_token_indices=coord_ids)
+    noop_loss_weight = float(train_cfg.get("noop_loss_weight", 1.0))
+    if noop_loss_weight != 1.0:
+        logger.info("[hf] noop_loss_weight = {} (Phase 5.5.1)", noop_loss_weight)
     collator = _HFActionVisionDataCollator(
-        processor=processor, max_seq_length=train_cfg["max_seq_length"]
+        processor=processor,
+        max_seq_length=train_cfg["max_seq_length"],
+        noop_loss_weight=noop_loss_weight,
     )
     return model, processor, collator
 
@@ -378,7 +534,8 @@ def run_training(
     early_stopping_patience = int(train_cfg.get("early_stopping_patience", 2))
     early_stopping_threshold = float(train_cfg.get("early_stopping_threshold", 0.001))
 
-    trainer = SFTTrainer(
+    trainer_cls = _WeightedSFTTrainer if not use_unsloth else SFTTrainer
+    trainer = trainer_cls(
         model=model,
         processing_class=processor,
         data_collator=data_collator,
