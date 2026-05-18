@@ -162,3 +162,16 @@ rl:
   # at inference. 0.0 disables the bonus entirely (the §5.6 default); set to
   # 0.05 to restore the Phase-4.2 behavior for ablation.
   format_bonus: 0.0
+  # Phase 7.4 / Phase 8: combined reward formula
+  #   r = visual_weight * visual_reward + critic_weight * critic_reward
+  #         + (format_bonus if non-terminal else 0)
+  #
+  # All terms are in [-1, 1] and the sum is clipped to [-1, 1] at the end.
+  #   - visual_weight: 1.0 / critic_weight: 0.0  -> classic SSIM-only (§5.6 baseline)
+  #   - visual_weight: 1.0 / critic_weight: 0.1  -> Phase 7.4 auxiliary critic
+  #   - visual_weight: 0.0 / critic_weight: 1.0  -> Phase 8 GT-free regime
+  # When visual_weight=0 the GT-canvas execution is skipped entirely (saves
+  # ~30% per-step compute) — RL truly never touches the GT actions.
+  visual_weight: 0.0
+  critic_weight: 1.0
+  critic_path: "models/critic"

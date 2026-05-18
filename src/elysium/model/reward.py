@@ -21,10 +21,16 @@ gradient further from pixel-perfect.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from skimage.metrics import structural_similarity
 
-__all__ = ["visual_reward"]
+if TYPE_CHECKING:
+    from PIL import Image
+    from elysium.model.critic import DrawingCritic
+
+__all__ = ["visual_reward", "critic_reward"]
 
 _CHANGE_THRESHOLD = 0.01   # per-channel delta considered "changed"
 _MIN_GT_PIXELS = 50        # below this the row should not be in the RL dataset
@@ -118,3 +124,48 @@ def visual_reward(
 
     reward = coverage * accuracy - 0.1 * spurious
     return float(np.clip(reward, -1.0, 1.0))
+
+
+def critic_reward(
+    canvases: list[np.ndarray],
+    instructions: list[str],
+    critic: "DrawingCritic",
+) -> list[float]:
+    """Phase 7.4: batched SigLIP critic score rescaled to [-1, 1].
+
+    The critic returns ``P(canvas is plausibly human-drawn for instruction X)``
+    in [0, 1]. Rescaling to [-1, 1] (via ``2p - 1``) puts it on the same
+    scale as ``visual_reward`` so the combined reward
+    ``visual_reward + critic_weight * critic_reward`` doesn't have one
+    term mechanically dominating the other.
+
+    Batched: a single SigLIP forward over the whole list. Caller is
+    responsible for putting the critic on the right device beforehand;
+    this function does not move it.
+
+    Args:
+        canvases: list of float32 ``[H, W, 3]`` arrays in ``[0, 1]``,
+            typically the post-execution predicted canvases from one
+            GRPO group.
+        instructions: list of bare instruction strings (history blocks
+            stripped) — same length as ``canvases``.
+        critic: loaded :class:`DrawingCritic` with frozen encoders.
+
+    Returns:
+        list of floats in ``[-1, 1]``, same length as the input lists.
+    """
+    import torch
+    from PIL import Image as _PILImage
+
+    assert len(canvases) == len(instructions), (
+        f"length mismatch: {len(canvases)} canvases vs {len(instructions)} instructions"
+    )
+    if not canvases:
+        return []
+    pil_imgs = [
+        _PILImage.fromarray((np.clip(c, 0.0, 1.0) * 255).astype(np.uint8), mode="RGB")
+        for c in canvases
+    ]
+    with torch.no_grad():
+        probs = critic(pil_imgs, instructions)  # [B] in [0, 1]
+    return [float(2.0 * p - 1.0) for p in probs.detach().cpu().tolist()]

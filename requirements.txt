@@ -43,3 +43,5 @@ bitsandbytes>=0.44.0
 sentencepiece>=0.1.99
 einops>=0.7.0
 tensorboard>=2.15.0
+scikit-learn>=1.4.0   # Phase 7.3: AUC for the SigLIP critic
+scikit-image>=0.22.0  # Phase 4.1: SSIM-on-bbox reward

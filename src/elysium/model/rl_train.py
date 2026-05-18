@@ -199,6 +199,7 @@ def _build_grpo_dataset(
     prompts: list[str] = []
     images: list[Any] = []
     gt_actions: list[str] = []
+    bare_instructions: list[str] = []
     dropped_terminal = 0
     dropped_near_terminal = 0
 
@@ -228,6 +229,12 @@ def _build_grpo_dataset(
         prompts.append(prompt_text)
         images.append(row["image"])
         gt_actions.append(row["gt_actions"])
+        # Strip the history-block prefix the format module prepends; the
+        # critic only needs the bare task text. See format._render_user_text.
+        bare = instruction
+        if "Instruction:" in bare:
+            bare = bare.split("Instruction:", 1)[1].strip()
+        bare_instructions.append(bare)
 
     total = len(train_data)
     kept = len(prompts)
@@ -238,20 +245,33 @@ def _build_grpo_dataset(
     assert kept > 0, "GRPO dataset is empty after filtering — check data/processed/"
 
     return Dataset.from_dict(
-        {"prompt": prompts, "image": images, "gt_actions": gt_actions},
+        {
+            "prompt": prompts,
+            "image": images,
+            "gt_actions": gt_actions,
+            "instruction": bare_instructions,
+        },
         features=Features({
             "prompt": Value("string"),
             "image": HFImage(),
             "gt_actions": Value("string"),
+            "instruction": Value("string"),
         }),
     )
 
 
-def _make_reward_fn(horizon: int, format_bonus: float = 0.0) -> Any:
+def _make_reward_fn(
+    horizon: int,
+    format_bonus: float = 0.0,
+    critic: Any = None,
+    critic_weight: float = 0.0,
+    visual_weight: float = 1.0,
+) -> Any:
     def visual_reward_fn(
         completions: list[Any],
         image: list[Image.Image],
         gt_actions: list[str],
+        instruction: list[str] | None = None,
         **kwargs: Any,
     ) -> list[float]:
         # Within one reward call (one GRPO group), all `num_generations`
@@ -261,7 +281,18 @@ def _make_reward_fn(horizon: int, format_bonus: float = 0.0) -> Any:
         canvas_cache: dict[int, np.ndarray] = {}
 
         rewards: list[float] = []
-        for completion, canvas_pil, gt_json in zip(completions, image, gt_actions):
+        # Phase 7.4: collect (predicted_canvas, instruction) for parse-valid
+        # completions so we can batch-call the critic once per GRPO group
+        # instead of once per completion. The critic forward dominates the
+        # reward latency when enabled.
+        critic_canvases: list[np.ndarray] = []
+        critic_instructions: list[str] = []
+        critic_indices: list[int] = []  # positions in `rewards` to add to
+
+        use_critic = critic is not None and critic_weight > 0.0
+        for i, (completion, canvas_pil, gt_json) in enumerate(
+            zip(completions, image, gt_actions)
+        ):
             text = completion if isinstance(completion, str) else completion[-1]["content"]
 
             pil_id = id(canvas_pil)
@@ -277,13 +308,23 @@ def _make_reward_fn(horizon: int, format_bonus: float = 0.0) -> Any:
                 continue
 
             predicted = execute_chunk(canvas_np, pred_chunk, original=canvas_np)
-            gt_key = (pil_id, gt_json)
-            gt_target = gt_cache.get(gt_key)
-            if gt_target is None:
-                gt_chunk = ActionChunk.from_json_str(gt_json, horizon)
-                gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
-                gt_cache[gt_key] = gt_target
-            r = visual_reward(predicted, gt_target, canvas_np)
+            # Phase 8 GT-free path: when visual_weight=0 we skip the GT
+            # execution entirely (saves the per-step GT chunk render). The
+            # critic-only reward becomes the sole signal.
+            if visual_weight > 0.0:
+                gt_key = (pil_id, gt_json)
+                gt_target = gt_cache.get(gt_key)
+                if gt_target is None:
+                    gt_chunk = ActionChunk.from_json_str(gt_json, horizon)
+                    gt_target = execute_chunk(canvas_np, gt_chunk, original=canvas_np)
+                    gt_cache[gt_key] = gt_target
+                r = visual_weight * visual_reward(predicted, gt_target, canvas_np)
+            else:
+                r = 0.0
+            if use_critic and instruction is not None and i < len(instruction):
+                critic_canvases.append(predicted)
+                critic_instructions.append(instruction[i])
+                critic_indices.append(len(rewards))
             # Phase 4.2 added a +0.05 additive bonus for non-terminal
             # parse-valid completions so a near-correct-but-wrong-colour
             # stroke scored strictly above 0. §5.1 diagnosed this as the
@@ -294,6 +335,17 @@ def _make_reward_fn(horizon: int, format_bonus: float = 0.0) -> Any:
             if format_bonus and not pred_chunk.is_terminal:
                 r = float(np.clip(r + format_bonus, -1.0, 1.0))
             rewards.append(r)
+
+        # Phase 7.4: add the auxiliary critic reward in one batched call.
+        if use_critic and critic_canvases:
+            from elysium.model.reward import critic_reward as _critic_reward
+            critic_scores = _critic_reward(
+                critic_canvases, critic_instructions, critic
+            )
+            for idx, score in zip(critic_indices, critic_scores):
+                rewards[idx] = float(np.clip(
+                    rewards[idx] + critic_weight * score, -1.0, 1.0,
+                ))
 
         return rewards
 
@@ -320,10 +372,30 @@ def run_rl_training(
     output_dir = Path(data_cfg["checkpoint_dir"]) / "rl_final"
     horizon: int = data_cfg["action_horizon"]
     format_bonus = float(rl_cfg.get("format_bonus", 0.0))
+    critic_weight = float(rl_cfg.get("critic_weight", 0.0))
+    critic_path = rl_cfg.get("critic_path", "models/critic")
+    visual_weight = float(rl_cfg.get("visual_weight", 1.0))
+    critic = None
+    if critic_weight > 0:
+        from elysium.model.critic import DrawingCritic
+        logger.info(
+            "RL reward: loading critic from {} (critic_weight={})",
+            critic_path, critic_weight,
+        )
+        critic = DrawingCritic.load(critic_path)
+        critic.eval()
+        if torch.cuda.is_available():
+            critic = critic.to("cuda")
     logger.info(
-        "RL reward: visual_reward + format_bonus={} (Phase 5.6: 0.0 = §5.1 fix)",
-        format_bonus,
+        "RL reward: visual_weight={} * visual_reward + critic_weight={} * critic_reward "
+        "+ format_bonus={} (Phase 8 GT-free: visual_weight=0.0, critic_weight=1.0)",
+        visual_weight, critic_weight, format_bonus,
     )
+    if visual_weight == 0.0 and critic_weight == 0.0:
+        raise ValueError(
+            "Both visual_weight and critic_weight are 0 — no reward signal at all. "
+            "Set at least one > 0 in configs/train.yaml under `rl:`."
+        )
 
     tb_root = Path(cfg.get("training", {}).get("tensorboard_dir", "logs/tensorboard"))
     run_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -441,7 +513,13 @@ def run_rl_training(
         processing_class=processor,
         args=grpo_config,
         train_dataset=grpo_dataset,
-        reward_funcs=[_make_reward_fn(horizon, format_bonus=format_bonus)],
+        reward_funcs=[_make_reward_fn(
+            horizon,
+            format_bonus=format_bonus,
+            critic=critic,
+            critic_weight=critic_weight,
+            visual_weight=visual_weight,
+        )],
         callbacks=[
             _AssertParamsFinite(),
             _DetectCollapse(noop_token_len=noop_token_len),

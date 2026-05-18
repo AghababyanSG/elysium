@@ -29,10 +29,11 @@ class TestFormatBonusGating(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
     def test_make_reward_fn_accepts_format_bonus_param(self) -> None:
-        self.assertIn(
-            "def _make_reward_fn(horizon: int, format_bonus: float = 0.0)",
-            self.rl_train_text,
-        )
+        # Looser than a literal signature pin because §7.4 added critic args
+        # after format_bonus. The contract is: format_bonus is a kwarg with
+        # default 0.0.
+        self.assertIn("def _make_reward_fn(", self.rl_train_text)
+        self.assertIn("format_bonus: float = 0.0", self.rl_train_text)
 
     def test_bonus_is_gated_by_format_bonus_value(self) -> None:
         # Must check the truthiness of format_bonus AND the non-terminal flag.
